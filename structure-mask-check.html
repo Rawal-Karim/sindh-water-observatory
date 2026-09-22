@@ -1,0 +1,21 @@
+<!doctype html><meta charset="utf-8"><title>Structure masking checks</title>
+<pre id="result">Running checks…</pre><canvas id="sample" width="256" height="256"></canvas>
+<script src="structure-mask.js"></script><script>
+const canvas=document.querySelector('canvas'),ctx=canvas.getContext('2d');
+const coords={x:90400,y:55970,z:17},n=256*2**coords.z;
+function geo(x,y){return [(coords.x*256+x)/n*360-180,Math.atan(Math.sinh(Math.PI*(1-2*(coords.y*256+y)/n)))*180/Math.PI];}
+function feature(type,points,width=12){const flat=type==='Polygon'?points.flat():points;return {type:'Feature',bbox:[Math.min(...flat.map(p=>p[0])),Math.min(...flat.map(p=>p[1])),Math.max(...flat.map(p=>p[0])),Math.max(...flat.map(p=>p[1]))],properties:{width_m:width},geometry:{type,coordinates:points}};}
+function paint(features){ctx.globalCompositeOperation='source-over';ctx.fillStyle='#36b9ed';ctx.fillRect(0,0,256,256);StructureMask.setData({type:'FeatureCollection',features});StructureMask.erase(canvas,coords);}
+function alpha(x,y){return ctx.getImageData(x,y,1,1).data[3];}
+let count=0;function check(ok,msg){if(!ok)throw Error(msg);count++;}
+try{
+paint([feature('LineString',[geo(-30,128),geo(300,128)])]);
+check(alpha(128,128)===0,'Bridge center must be clear');check(alpha(0,128)===0&&alpha(255,128)===0,'Bridge must remain clear across tile edges');check(alpha(128,90)===255,'Adjacent water must remain opaque');
+const outer=[[40,40],[220,40],[220,220],[40,220],[40,40]].map(p=>geo(...p));
+const hole=[[100,100],[160,100],[160,160],[100,160],[100,100]].map(p=>geo(...p));
+paint([feature('Polygon',[outer,hole])]);check(alpha(60,60)===0,'Structure footprint clear');check(alpha(128,128)===255,'Polygon hole remains water');check(alpha(20,20)===255,'Outside footprint remains water');
+paint([feature('LineString',[geo(1000,1000),geo(1100,1100)])]);check(alpha(128,128)===255,'Distant structure must not affect this tile');
+paint([]);check(alpha(128,128)===255,'Empty mask must preserve tile');
+document.querySelector('#result').textContent=count+' checks passed: bridge center, adjacent water, tile seams, polygons, holes and empty masks.';
+}catch(e){document.querySelector('#result').textContent='FAIL: '+e.message;throw e;}
+</script>

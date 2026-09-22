@@ -1,0 +1,5 @@
+Generated with the built-in image_gen tool, 2026-09-22.
+Output: synthetic-water-texture.png. GeoTIFF conversion preserves RGB pixels unchanged.
+
+Final prompt:
+Create one seamless square photorealistic WATER MATERIAL TEXTURE for a satellite map renderer. Overhead orthographic view of muted olive-brown turbid freshwater typical of the Indus River and Manchar Lake, Sindh. Entire image is water only, flat uniform naturally muddy green-brown surface, extremely subtle fine mottling and gentle suspended-sediment tonal variation. It will be clipped by a scientifically measured shoreline mask by the app, so do not include shorelines, land, rivers, lakes shapes, text, waves of identifiable scale, islands, objects, boats, foam, buildings, reflections of sky, sun glints or gradients. No invented geography. Do not depict a scene, depict a repeatable material swatch. Low contrast, natural satellite color, medium-dark olive khaki water, no saturated blue or emerald. Square 1024x1024.
