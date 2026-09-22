@@ -15,7 +15,7 @@ var split = ui.SplitPanel({firstPanel: left, secondPanel: right, orientation: 'h
 var panel = ui.Panel({style: {width: '340px', padding: '22px', backgroundColor: '#f7faf7'}});
 ui.root.clear(); ui.root.setLayout(ui.Panel.Layout.flow('horizontal'));
 var controlsVisible = true;
-ui.root.add(ui.Button({label: '☰', onClick: function() {controlsVisible = !controlsVisible; panel.style().set('shown', controlsVisible);}, style: {width: '32px', margin: '4px'}}));
+ui.root.add(ui.Button({label: '☰', onClick: function() {controlsVisible = !controlsVisible; ui.root.widgets().get(1).style().set('shown', controlsVisible);}, style: {width: '32px', margin: '4px'}}));
 ui.root.add(panel); ui.root.add(split);
 panel.add(ui.Label('SINDH WATER OBSERVATORY', {fontWeight: 'bold', fontSize: '21px', color: '#164e43'}));
 panel.add(ui.Label('Google satellite reference ← swipe → satellite + surface changes'));
@@ -68,6 +68,7 @@ function outline(map) { map.addLayer(ee.Image().byte().paint(ee.FeatureCollectio
 function analyze() {
   var raw = date.getValue();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(raw) || isNaN(Date.parse(raw)) || new Date(raw).toISOString().slice(0,10) !== raw) { status.setValue('Enter a valid date as YYYY-MM-DD.'); return; }
+  if (raw < '2020-01-01') {status.setValue('Choose a date from 2020 onward.'); return;}
   if (raw > new Date().toISOString().slice(0,10)) { status.setValue('Choose today or an earlier date.'); return; }
   var id = ++generation;
   var end = ee.Date(raw).advance(1, 'day'), start = end.advance(-Number(days.getValue()), 'day');
@@ -159,3 +160,93 @@ outline(left); outline(right);
 
 
 
+// Historical single-day analysis and GIS exports. No visual structure masks modify scientific data.
+var historyPanel = ui.Panel({style:{width:'340px',padding:'18px',backgroundColor:'#f7faf7'}});
+var historyBox = null, historyGeometry = null, historyScan = 0, historyDates = [], historyCollection, historyResult=0;
+var historyStatus = ui.Label('Select a small area and scan one month for clear observations.', {whiteSpace:'pre-wrap'});
+var requestedDay = String(ui.url.get('date', new Date().toISOString().slice(0,10)));
+if (!/^\d{4}-\d{2}-\d{2}$/.test(requestedDay)) requestedDay = new Date().toISOString().slice(0,10);
+var historyMonth = ui.Textbox({value:requestedDay.slice(0,7),placeholder:'YYYY-MM',onChange:invalidateHistory});
+var clearDay = ui.Select({items:[],placeholder:'Scan a month first',onChange:function(){historyResult++;historyOutputs.clear();historyAnalyze.setDisabled(false);}});
+var historyOutputs = ui.Panel();
+function showHistory(){ui.root.widgets().set(1,historyPanel);historyPanel.style().set('shown',true);}
+function invalidateHistory(){historyScan++;historyResult++;historyDates=[];clearDay.items().reset([]);historyAnalyze.setDisabled(true);if(scanButton)scanButton.setDisabled(false);historyOutputs.clear();historyStatus.setValue('Area or month changed. Scan clear days again.');}
+var historyAnalyze = ui.Button({label:'Analyze selected clear day',disabled:true,onClick:analyzeClearDay});
+var scanButton = ui.Button('Find clear days in month',scanClearDays);
+historyPanel.add(ui.Label('HISTORY & GIS EXPORT', {fontWeight:'bold',fontSize:'20px',color:'#164e43'}));
+historyPanel.add(ui.Button('Back to province overview',function(){ui.root.widgets().set(1,panel);}));
+historyPanel.add(ui.Label('2020 to today · Sentinel-2 MNDWI', {fontWeight:'bold'}));
+historyPanel.add(ui.Label('Only acquisition days with every sampled 20 m pixel clear and observed in your selected area are listed. SCL excludes clouds/shadows and Cloud Score+ cs_cdf ≥ 0.65 screens residual obscuration. Automated screening is not a guarantee.',{fontSize:'12px'}));
+historyPanel.add(ui.Button('Use current map view as area',function(){setHistoryBox(left.getBounds());}));
+var boxLabel=ui.Label('No area selected. Zoom in, then use the map view.',{fontSize:'12px'});historyPanel.add(boxLabel);
+historyPanel.add(ui.Label('Month (YYYY-MM)'));historyPanel.add(historyMonth);historyPanel.add(scanButton);historyPanel.add(clearDay);historyPanel.add(historyAnalyze);historyPanel.add(historyStatus);historyPanel.add(historyOutputs);
+historyPanel.add(ui.Label('Exports: 20 m EPSG:32642 (UTM 42N) GeoTIFF; water = 1, dry = 0, unknown/outside Sindh = -9999 (set this NoData value in GIS). Band 2 is MNDWI, band 3 is acquisition day since 1970-01-01 UTC. GeoJSON polygons are WGS84. Raw classification, no AI material or infrastructure display exclusions.',{fontSize:'11px'}));
+panel.widgets().insert(2,ui.Button('Historical clear dates & GIS exports',showHistory));
+function setHistoryBox(b){
+  if(typeof b==='string'){try{b=JSON.parse(b);}catch(e){historyStatus.setValue('Invalid area coordinates.');return;}}
+  if(!Array.isArray(b)||b.length!==4||b.some(function(v){return typeof v!=='number'||!isFinite(v);})||b[0]>=b[2]||b[1]>=b[3]||b[0]<66.5||b[2]>71.3||b[1]<23.6||b[3]>28.7){historyStatus.setValue('Select a rectangle within the Sindh map bounds.');return;}
+  var km2=6371*6371*Math.abs((b[2]-b[0])*Math.PI/180*(Math.sin(b[3]*Math.PI/180)-Math.sin(b[1]*Math.PI/180)));
+  if(km2<0.001||km2>400){historyStatus.setValue('Area must be between 0.001 and 400 km². Zoom in before selecting.');return;}
+  invalidateHistory();historyBox=b;historyGeometry=ee.Geometry.Rectangle(b,null,false).intersection(region,ee.ErrorMargin(1));
+  boxLabel.setValue('Selected rectangle: '+km2.toFixed(2)+' km²; clipped to Sindh.');left.setCenter((b[0]+b[2])/2,(b[1]+b[3])/2,14);right.setCenter((b[0]+b[2])/2,(b[1]+b[3])/2,14);
+}
+function strictS2(img){
+  var scl=img.select('SCL');
+  // Require all 10 m Cloud Score+ subpixels to pass before reducing to 20 m.
+  var score=img.select('cs_cdf').gte(0.65).unmask(0).reduceResolution({reducer:ee.Reducer.min(),maxPixels:16}).reproject({crs:'EPSG:32642',scale:20});
+  var clear=scl.eq(4).or(scl.eq(5)).or(scl.eq(6)).and(score);
+  var sum=img.select('B3').add(img.select('B11'));
+  var index=img.select('B3').subtract(img.select('B11')).divide(sum).rename('mndwi').updateMask(sum.gt(0));
+  return img.select(RGB).addBands(index).updateMask(clear).copyProperties(img,['system:time_start']);
+}
+function scanClearDays(){
+  if(!historyGeometry){historyStatus.setValue('Select an area first.');return;}
+  var month=historyMonth.getValue(),today=new Date().toISOString().slice(0,10);
+  if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)||month<'2020-01'||month>today.slice(0,7)){historyStatus.setValue('Choose a month from 2020-01 through '+today.slice(0,7)+'.');return;}
+  invalidateHistory();var scanId=historyScan;scanButton.setDisabled(true);historyStatus.setValue('Checking acquisition days and every 20 m cell…');
+  var start=ee.Date(month+'-01'),end=ee.Date(ee.Number(start.advance(1,'month').millis()).min(ee.Date(today).advance(1,'day').millis()));
+  historyCollection=ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED').filterBounds(historyGeometry).filterDate(start,end)
+    .linkCollection(ee.ImageCollection('GOOGLE/CLOUD_SCORE_PLUS/V1/S2_HARMONIZED'),['cs_cdf']).map(strictS2);
+  var dates=ee.List(historyCollection.aggregate_array('system:time_start')).map(function(t){return ee.Date(t).format('YYYY-MM-dd');}).distinct().sort();
+  var screened=ee.FeatureCollection(dates.map(function(d){d=ee.String(d);var day=historyCollection.filterDate(ee.Date(d),ee.Date(d).advance(1,'day')).mosaic();
+    var valid=day.select('mndwi').mask().unmask(0,false).rename('clear');
+    var minimum=valid.reduceRegion({reducer:ee.Reducer.min(),geometry:historyGeometry,crs:'EPSG:32642',scale:20,maxPixels:2e6,tileScale:4}).get('clear');
+    return ee.Feature(null,{date:d,clear:minimum});
+  })).filter(ee.Filter.eq('clear',1));
+  screened.aggregate_array('date').evaluate(function(list,error){
+    if(scanId!==historyScan)return;scanButton.setDisabled(false);
+    if(error){historyStatus.setValue('Cloud screening failed: '+error);return;}
+    historyDates=list||[];clearDay.items().reset(historyDates);
+    if(!historyDates.length){historyStatus.setValue('No fully clear, fully observed days in this month for this area. Try another month or a smaller area.');return;}
+    clearDay.setValue(historyDates.indexOf(requestedDay)>=0?requestedDay:historyDates[historyDates.length-1]);
+    historyStatus.setValue(historyDates.length+' clear acquisition days found. Select one to analyze.');historyAnalyze.setDisabled(false);
+  });
+}
+function analyzeClearDay(){
+  var day=clearDay.getValue();if(historyDates.indexOf(day)<0)return;
+  var resultId=++historyResult,scanId=historyScan,geom=historyGeometry,box=historyBox.slice(),threshold=mndwi.getValue();
+  historyOutputs.clear();historyAnalyze.setDisabled(true);historyStatus.setValue('Preparing '+day+' observations and water mask…');
+  var image=historyCollection.filterDate(day,ee.Date(day).advance(1,'day')).mosaic().clip(geom),index=image.select('mndwi');
+  var water=index.gt(threshold).rename('water');
+  var material=ee.Image(WATER_TEXTURE_ASSET).select([0,1,2],RGB).resample('bilinear').divide(255).pow(1.3).multiply(3000).updateMask(water).clip(geom);
+  left.layers().reset();right.layers().reset();left.addLayer(image,visRGB,day+' clear Sentinel-2',true);right.addLayer(material,visRGB,day+' synthetic water',true,.85);right.addLayer(water.selfMask(),{palette:['2fb9ed']},day+' detected water',false);outline(left);outline(right);
+  var stats=ee.Image.pixelArea().divide(1e6).updateMask(water).reduceRegion({reducer:ee.Reducer.sum(),geometry:geom,crs:'EPSG:32642',scale:20,maxPixels:2e6,tileScale:4});
+  stats.evaluate(function(result,error){
+    if(scanId!==historyScan||resultId!==historyResult)return;historyAnalyze.setDisabled(false);
+    if(error){historyStatus.setValue('Statistics failed: '+error);return;}
+    historyStatus.setValue(day+' · clear screened area · '+Number(result.area||0).toFixed(3)+' km² detected water.');
+    var name='sindh_water_'+day.replace(/-/g,'');
+    var raster=water.toFloat().addBands(index.toFloat()).addBands(ee.Image.constant(ee.Date(day).millis().divide(86400000)).rename('observation_day').toFloat().updateMask(index.mask())).clip(geom).unmask(-9999,false);
+    historyOutputs.add(ui.Button('Prepare GIS GeoTIFF',function(){raster.getDownloadURL({name:name,region:ee.Geometry.Rectangle(box,null,false),crs:'EPSG:32642',scale:20,format:'GEO_TIFF',filePerBand:false},function(url,err){if(scanId!==historyScan||resultId!==historyResult)return;if(err){historyStatus.setValue('GeoTIFF failed. Try a smaller area: '+err);return;}historyOutputs.add(ui.Label({value:'Download water / MNDWI / observation-day GeoTIFF',targetUrl:url}));});}));
+    var vectors=water.selfMask().toInt().reduceToVectors({geometry:geom,crs:'EPSG:32642',scale:20,geometryType:'polygon',eightConnected:true,labelProperty:'water',maxPixels:2e6,tileScale:4}).map(function(f){return f.set({date:day,method:'S2 MNDWI',threshold:threshold,cloud_cdf:0.65,scale_m:20});});
+    historyOutputs.add(ui.Button('Prepare water polygons (GeoJSON)',function(){vectors.getDownloadURL({format:'geojson',filename:name,callback:function(url,err){if(scanId!==historyScan||resultId!==historyResult)return;if(err){historyStatus.setValue('Vector export failed. Try a smaller area: '+err);return;}historyOutputs.add(ui.Label({value:'Download water polygons · GeoJSON',targetUrl:url}));}});}));
+    historyOutputs.add(ui.Label('Open GeoTIFF or GeoJSON in QGIS / ArcGIS. Set raster NoData to -9999; band order: water, MNDWI, observation_day. To obtain Shapefile, use Save Features As / Export Features on the GeoJSON. Links expire; save files after generation.',{fontSize:'11px'}));
+    historyOutputs.add(ui.Button('Prepare analysis JSON for web map',function(){
+      var manifest={schemaVersion:1,rendering:'satellite-preserving-overlays-v2',region:'Sindh',method:'Sentinel-2 MNDWI',observationMode:'single-clear-day',area:box,clearDates:historyDates,cloudScreen:{scl:[4,5,6],cs_cdf:0.65,requiredCoverage:100,scale:20},generatedAt:new Date().toISOString(),windowStart:day,windowEnd:day,latestScene:day,waterKm2:result.area||0,coveragePercent:100,statisticsScale:20,thresholds:{mndwi:threshold,vv:-17},layers:{}};
+      function receive(key,img,visual){img.getMapId(visual,function(info,err){if(scanId!==historyScan||resultId!==historyResult)return;if(err){historyStatus.setValue('Map export failed: '+err);return;}manifest.layers[key]={url:info.urlFormat||('https://earthengine.googleapis.com/v1/'+info.mapid+'/tiles/{z}/{x}/{y}')};if(manifest.layers.water&&manifest.layers.reconstruction){historyOutputs.add(ui.Textbox({value:JSON.stringify(manifest),style:{stretch:'horizontal'}}));historyOutputs.add(ui.Label('Copy JSON into a .json file, then load it using Data in the web map. Load several dates to switch between them.',{fontSize:'11px'}));}});}
+      receive('water',water.selfMask(),{palette:['2fb9ed']});receive('reconstruction',material,visRGB);
+    }));
+  });
+}
+var suppliedBox=ui.url.get('box',null);if(suppliedBox)setHistoryBox(suppliedBox);
+if(ui.url.get('history',false))showHistory();

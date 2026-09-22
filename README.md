@@ -53,3 +53,18 @@ Validation: eight browser canvas checks cover bridge centers, adjacent water, ti
 ## GitHub Pages
 
 Publish the `main` branch and `/ (root)` folder under Settings > Pages. No build step is required. The bundled analysis is a dated snapshot; GitHub Pages does not run Earth Engine or refresh satellite analysis. To refresh all visitors, export new analysis from the published Earth Engine app and replace `analysis.json`. Individual visitors can load their own export using Data.
+
+
+## Historical days, search, and GIS export
+
+Open **Dates & GIS export**, draw a rectangle (two corners, at most 400 km²), choose a date from 2020 onward, then open **Find clear days & export**. The area and requested month are passed to the Earth Engine app. Scan the month and select a verified clear acquisition day. Missing and cloud-obscured days are omitted; no nearby date is silently substituted as the requested date.
+
+Screening requires SCL land/vegetation/water classes 4/5/6 and Cloud Score+ `cs_cdf >= 0.65`. Every sampled cell of the selected region must have valid MNDWI at 20 m in EPSG:32642. The minimum Cloud Score+ mask is aggregated from 10 m to 20 m. Overlapping scenes from the same UTC day can fill one another; different days are never combined in historical mode. Automated masks can still make mistakes. The bundled province-wide snapshot remains a separately labelled multi-day mosaic.
+
+The Earth Engine app directly generates a three-band float32 GeoTIFF at 20 m in UTM 42N (EPSG:32642): water (1 water, 0 dry), MNDWI, and observation day (UTC days since 1970-01-01). Set -9999 as NoData in your GIS. GeoJSON water polygons carry observation date, threshold, method and scale; they use WGS84 and can be converted to Shapefile through QGIS Save Features As or ArcGIS Export Features. These are raw classification exports; neither AI material nor browser-side structure exclusions alter the scientific data. Large/complex requests may need a smaller rectangle.
+
+To compare historical dates in the GitHub viewer, prepare analysis JSON in Earth Engine, save the text to a .json file, and load it using Data. Loaded dates appear as switch buttons for this browser session; tile URLs expire. The calendar requests processing and does not relabel or change an existing layer. GitHub Pages has no authenticated processing backend; automatic historical tile retrieval is not implemented.
+
+Location search uses the public OpenStreetMap Nominatim service only on form submission (no autocomplete), caches repeat queries for the session, and filters results against the Sindh boundary. Search queries are sent to Nominatim; availability and place coverage depend on that service. Attribution: https://www.openstreetmap.org/copyright .
+
+Validation: January 2020 was scanned over a 1.12 km² Kotri area, yielding 2020-01-04 as fully screened clear. Actual public download requests returned a 56×51 three-band float32 GeoTIFF in EPSG:32642 and nine dated water polygons. Search for Thatta and two-corner rectangle selection were tested in-browser.
