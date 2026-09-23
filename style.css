@@ -15,3 +15,4 @@ aside>*{flex-shrink:0}
 .search-results:empty{margin:0}
 #processDate[aria-disabled=true]{pointer-events:auto;cursor:not-allowed}
 .drawing-map,.drawing-map .leaflet-interactive{cursor:crosshair!important}
+.drawing-map{touch-action:none}
