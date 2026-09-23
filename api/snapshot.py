@@ -39,9 +39,21 @@ def prepare_s2(img):
     green, swir = img.select('B3'), img.select('B11')
     total = green.add(swir)
     index = green.subtract(swir).divide(total).rename('mndwi').updateMask(total.gt(0))
+    ndwi = img.normalizedDifference(['B3', 'B8']).rename('ndwi')
     time = ee.Image.constant(img.date().millis()).rename('time').toDouble()
-    return (img.select(['B4', 'B3', 'B2', 'B11']).addBands(index).addBands(time)
+    return (img.select(['B4', 'B3', 'B2', 'B8', 'B11']).addBands([index, ndwi]).addBands(time)
             .updateMask(valid).copyProperties(img, ['system:time_start']))
+
+
+RULE_BANDS = ['mndwi', 'ndwi', 'B8', 'B11']
+
+
+def water_rule(img):
+    """Same rule as the EE app and the single-day service: MNDWI > 0 with SWIR < 0.15, or 10 m NDWI > 0
+    with NIR < 0.15 and SWIR < 0.15 (drops bright-roof false water; finds channels narrower than 20 m)."""
+    dark_swir = img.select('B11').lt(1500)
+    return (img.select('mndwi').gt(THRESHOLD).And(dark_swir)
+            .Or(img.select('ndwi').gt(0).And(img.select('B8').lt(1500)).And(dark_swir)))
 
 
 def build(raw):
@@ -50,20 +62,20 @@ def build(raw):
     all_optical = (ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED').filterBounds(REGION)
                    .filterDate(end.advance(-365, 'day'), end).map(prepare_s2))
     optical = all_optical.filterDate(start, end)
-    latest = optical.select(['mndwi', 'time']).qualityMosaic('time').clip(REGION)
-    water = latest.select('mndwi').gt(THRESHOLD).rename('water').clip(REGION)
+    latest = optical.select(RULE_BANDS + ['time']).qualityMosaic('time').clip(REGION)
+    water = water_rule(latest).rename('water').clip(REGION)
     valid = water.mask().rename('valid')
-    dry = all_optical.map(lambda img: img.updateMask(img.select('mndwi').lte(THRESHOLD))).qualityMosaic('time').select(RGB)
+    dry = all_optical.map(lambda img: img.updateMask(water_rule(img).Not())).qualityMosaic('time').select(RGB)
     historical_rgb = all_optical.qualityMosaic('time').select(RGB)
     texture = historical_rgb.select('B3').divide(1800).clamp(0.6, 1.3).unmask(1)
     material = ee.Image(WATER_TEXTURE_ASSET).select([0, 1, 2], RGB).resample('bilinear')
     modeled_water = material.divide(255).pow(1.3).multiply(3000).multiply(texture).updateMask(water)
     prior_collection = all_optical.filterDate(end.advance(-365, 'day'), start)
-    empty_prior = ee.Image.constant([0, 0]).rename(['mndwi', 'time']).toDouble().updateMask(ee.Image(0))
+    empty_prior = ee.Image.constant([0, 0, 0, 0, 0]).rename(RULE_BANDS + ['time']).toDouble().updateMask(ee.Image(0))
     prior = (ee.ImageCollection([empty_prior])
-             .merge(prior_collection.select(['mndwi', 'time']).map(lambda img: img.toDouble()))
+             .merge(prior_collection.select(RULE_BANDS + ['time']).map(lambda img: img.toDouble()))
              .qualityMosaic('time'))
-    receded = prior.select('mndwi').gt(THRESHOLD).And(water.Not()).rename('receded')
+    receded = water_rule(prior).And(water.Not()).rename('receded')
     land = dry.updateMask(receded)
     reconstruction = (ee.ImageCollection([land.toFloat(), modeled_water.toFloat()]).mosaic()
                       .clip(REGION).updateMask(valid))
@@ -94,6 +106,7 @@ def main():
         'latestScene': values['latestScene'], 'scenes': values['scenes'],
         'waterKm2': values.get('waterKm2') or 0, 'coveragePercent': min(100, coverage),
         'statisticsScale': 100, 'thresholds': {'mndwi': THRESHOLD, 'vv': -17},
+        'waterRule': 'mndwi>0&swir<0.15 | ndwi>0&nir<0.15&swir<0.15',
         'layers': {
             'water': {'url': water.selfMask().getMapId({'palette': ['2fb9ed']})['tile_fetcher'].url_format},
             'reconstruction': {'url': reconstruction.getMapId(VIS_RGB)['tile_fetcher'].url_format},

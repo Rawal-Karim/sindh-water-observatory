@@ -98,10 +98,11 @@ function dayResult(text,error){const el=$('dayResult');el.textContent=text;el.cl
 async function previewWater(item,b,onStep,signal){const epsg=+item.properties['proj:epsg'],zone=epsg-32600,t=item.assets.scl['proj:transform'],c=[[b[0],b[1]],[b[0],b[3]],[b[2],b[1]],[b[2],b[3]]].map(p=>utm(p[0],p[1],zone)),xs=c.map(p=>p[0]),ys=c.map(p=>p[1]);
  const c0=Math.floor((Math.min(...xs)-t[2])/t[0]),c1=Math.ceil((Math.max(...xs)-t[2])/t[0]),r0=Math.floor((Math.max(...ys)-t[5])/t[4]),r1=Math.ceil((Math.min(...ys)-t[5])/t[4]),w=c1-c0,h=r1-r0;let loaded=0;
  // green is 10 m: its first overview is the 20 m grid shared with SCL and SWIR, and a quarter of the download.
- const read=async(key,level)=>{const img=await(await GeoTIFF.fromUrl(item.assets[key].href)).getImage(level),[d]=await img.readRasters({window:[c0,r0,c1,r1],samples:[0],signal});onStep(.1+.4*++loaded/3);return d;};
- const [scl,green,swir]=await Promise.all([read('scl',0),read('green',1),read('swir16',0)]);
+ const read=async(key,level)=>{const img=await(await GeoTIFF.fromUrl(item.assets[key].href)).getImage(level),[d]=await img.readRasters({window:[c0,r0,c1,r1],samples:[0],signal});onStep(.1+.4*++loaded/4);return d;};
+ const [scl,green,swir,nir]=await Promise.all([read('scl',0),read('green',1),read('swir16',0),read('nir',1)]);
  // S2_SR_HARMONIZED in Earth Engine subtracts the 1000 DN offset and clamps at 0; negative SWIR over water becomes 0.
- const cls=i=>{const v=scl[i];if(v!==4&&v!==5&&v!==6)return 2;const g=Math.max(green[i]-1000,0),s2=Math.max(swir[i]-1000,0);return g+s2>0&&g>s2?1:0;};
+ // Same rule as Earth Engine: MNDWI > 0 with SWIR < 0.15, or 10 m NDWI > 0 with NIR < 0.15 and SWIR < 0.15.
+ const cls=i=>{const v=scl[i];if(v!==4&&v!==5&&v!==6)return 2;const g=Math.max(green[i]-1000,0),s2=Math.max(swir[i]-1000,0),n=Math.max(nir[i]-1000,0);return s2<1500&&((g+s2>0&&g>s2)||(g+n>0&&g>n&&n<1500))?1:0;};
  const inside=[[b[0],b[1]],[b[0],b[3]],[b[2],b[1]],[b[2],b[3]]].every(p=>inSindh(...p)),[p0,p1,p2]=c,ux=[p2[0]-p0[0],p2[1]-p0[1]],uy=[p1[0]-p0[0],p1[1]-p0[1]],det=ux[0]*uy[1]-ux[1]*uy[0];
  let total=0,clear=0,wet=0;for(let r=0;r<h;r++){const dy=t[5]+(r0+r+.5)*t[4]-p0[1],row=inside?null:sindhCrossings(b[1]+((ux[0]*dy-ux[1]*(t[2]+(c0+.5)*t[0]-p0[0]))/det)*(b[3]-b[1]));
   for(let k=0;k<w;k++){const dx=t[2]+(c0+k+.5)*t[0]-p0[0],S=(dx*uy[1]-dy*uy[0])/det,Q=(ux[0]*dy-ux[1]*dx)/det;if(S<0||S>1||Q<0||Q>1)continue;if(row){const lon=b[0]+S*(b[2]-b[0]);let n=0;for(const x of row){if(x<lon)n++;else break;}if(n%2===0)continue;}
@@ -178,3 +179,21 @@ function showSnapshotDates(d){if(d.observationMode==='single-clear-day'||!d.wind
  $('snapshotRange').textContent=f(a,a.getUTCFullYear()!==b.getUTCFullYear())+' – '+f(b,true)+' ('+days+' days)';
  $('snapshotDates').title='Sentinel-2 water across Sindh: each place shows its latest clear view in these days. Newest image '+d.latestScene+(d.source==='daily-snapshot'?'. Updated every morning at 06:00 PKT.':'.');$('snapshotDates').hidden=false;}
 const loadAnalysisWithDates=loadAnalysis;loadAnalysis=function(d){loadAnalysisWithDates(d);showSnapshotDates(d);};if(analysis)showSnapshotDates(analysis);
+// Canal network (Sindh Irrigation Department channels, as on the Live Irrigation Map). Main canals and branches at every
+// zoom; distributaries, minors and drains from zoom 9. Satellites cannot see most channels narrower than ~20 m, so this
+// shows where they are. Loaded after the page, drawn on one canvas.
+map.createPane('canals');Object.assign(map.getPane('canals').style,{zIndex:430});
+const canalRenderer=L.canvas({pane:'canals',tolerance:6}),mainCanals=L.layerGroup(),minorCanals=L.layerGroup(),
+ canalNames={CANAL:'Canal',BRANCH:'Branch canal',DISTRY:'Distributary',MINOR:'Minor',DRAIN:'Drain',ESCAPE:'Escape'};
+let canalsOn=true,canalsLoaded=null;try{canalsOn=localStorage.getItem('sindhCanals')!=='off';}catch{}
+function loadCanals(){return canalsLoaded??=fetch('canals.json?v=1').then(r=>{if(!r.ok)throw Error('Canal network unavailable');return r.json();}).then(d=>{
+ const q=d.q;for(const f of d.f){const main=f.t==='CANAL'||f.t==='BRANCH',drain=f.t==='DRAIN'||f.t==='ESCAPE';
+  const lines=f.g.map(p=>{let x=p[0],y=p[1];const pts=[[y/q,x/q]];for(let i=2;i<p.length;i+=2){x+=p[i];y+=p[i+1];pts.push([y/q,x/q]);}return pts;});
+  L.polyline(lines,{renderer:canalRenderer,color:drain?'#d9b27a':'#8fe3ff',weight:main?2.4:1.3,opacity:main?.95:.8,dashArray:drain?'5 4':null})
+   .bindTooltip((f.n||'Unnamed')+' · '+canalNames[f.t],{sticky:true,direction:'top',opacity:.95}).addTo(main?mainCanals:minorCanals);}
+ map.attributionControl.addAttribution('Canal network: Sindh Irrigation Department');}).catch(err=>{canalsLoaded=null;throw err;});}
+function syncCanals(){const detail=map.getZoom()>=9;if(canalsOn){mainCanals.addTo(map);if(detail)minorCanals.addTo(map);else minorCanals.remove();}else{mainCanals.remove();minorCanals.remove();}$('canalLegend').hidden=!canalsOn;}
+function setCanals(on){canalsOn=on;const b=$('canalsToggle');b.classList.toggle('active',on);b.setAttribute('aria-pressed',String(on));b.title=on?'Hide the canal network':'Show the canal network';try{localStorage.setItem('sindhCanals',on?'on':'off');}catch{}
+ if(on)loadCanals().then(syncCanals).catch(()=>{b.title='Canal network could not load';});else syncCanals();}
+$('canalsToggle').onclick=()=>setCanals(!canalsOn);map.on('zoomend',()=>{if(canalsOn&&canalsLoaded)syncCanals();});
+if(window.requestIdleCallback)requestIdleCallback(()=>setCanals(canalsOn),{timeout:2000});else setTimeout(()=>setCanals(canalsOn),800);

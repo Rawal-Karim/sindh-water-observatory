@@ -87,7 +87,19 @@ def strict_s2(img):
     clear = scl.eq(4).Or(scl.eq(5)).Or(scl.eq(6)).And(score)
     total = img.select('B3').add(img.select('B11'))
     index = img.select('B3').subtract(img.select('B11')).divide(total).rename('mndwi').updateMask(total.gt(0))
-    return img.select(RGB).addBands(index).updateMask(clear).copyProperties(img, ['system:time_start'])
+    ndwi = img.normalizedDifference(['B3', 'B8']).rename('ndwi')
+    return (img.select(RGB + ['B8', 'B11']).addBands([index, ndwi]).updateMask(clear)
+            .copyProperties(img, ['system:time_start']))
+
+
+def water_rule(img, threshold):
+    """Water, as in the EE app and the daily snapshot (2026-09 rule):
+    MNDWI > threshold with dark SWIR (bright roofs pass MNDWI but not SWIR < 0.15), or — for channels
+    narrower than a 20 m SWIR pixel — 10 m NDWI (green/NIR) > 0 with NIR < 0.15 and the same SWIR limit.
+    Tested on Hyderabad/Kotri and Sehwan: built-up false water −95 %, drains found 22→55 % / 35→74 %."""
+    dark_swir = img.select('B11').lt(1500)
+    return (img.select('mndwi').gt(threshold).And(dark_swir)
+            .Or(img.select('ndwi').gt(0).And(img.select('B8').lt(1500)).And(dark_swir)))
 
 
 def tile_url(image, vis):
@@ -104,13 +116,13 @@ def analyze(box, day, min_clear, threshold):
                   .map(strict_s2))
     image = collection.mosaic().clip(geom)
     index = image.select('mndwi')
-    water = index.gt(threshold).rename('water')
+    water = water_rule(image, threshold).rename('water')
     area = ee.Image.pixelArea().divide(1e6)
     sums = (area.updateMask(water).rename('water')
             .addBands(area.updateMask(index.mask()).rename('valid'))
             .addBands(area.rename('total'))
-            .reduceRegion(reducer=ee.Reducer.sum(), geometry=geom, crs='EPSG:32642', scale=20,
-                          maxPixels=1e7, tileScale=4))  # 3 bands × ≤ 1.1 M px at 20 m for 400 km²
+            .reduceRegion(reducer=ee.Reducer.sum(), geometry=geom, crs='EPSG:32642', scale=10,
+                          maxPixels=5e7, tileScale=4))  # 10 m for the NDWI branch: 3 bands × ≤ 4 M px for 400 km²
     info = ee.Dictionary({'scenes': collection.size(), 'sums': sums}).getInfo()
     if not info['scenes']:
         return None
@@ -125,7 +137,7 @@ def analyze(box, day, min_clear, threshold):
         'area': box, 'generatedAt': dt.datetime.utcnow().isoformat(timespec='seconds') + 'Z',
         'windowStart': day, 'windowEnd': day, 'latestScene': day,
         'waterKm2': s.get('water') or 0, 'coveragePercent': round(min(100, clear_pct), 2),
-        'meetsMinClear': clear_pct >= min_clear, 'statisticsScale': 20,
+        'meetsMinClear': clear_pct >= min_clear, 'statisticsScale': 10, 'waterRule': 'mndwi>t&swir<0.15 | ndwi>0&nir<0.15&swir<0.15',
         'thresholds': {'mndwi': threshold, 'vv': -17},
         'cloudScreen': {'scl': [4, 5, 6], 'cs_cdf': 0.65, 'requiredCoverage': min_clear, 'scale': 20},
         'layers': {

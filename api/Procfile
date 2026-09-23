@@ -1,2 +1,3 @@
 web: gunicorn -b :$PORT -w 1 --threads 8 --timeout 150 main:app
 snapshot: python snapshot.py
+evaluate: python evaluate.py

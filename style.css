@@ -89,3 +89,9 @@ dialog h2{font-size:22px}
 .snapshot-dates strong{font-size:14px;font-weight:600;white-space:nowrap}
 @media(max-width:700px){.snapshot-dates strong{font-size:12px}.snapshot-label{font-size:9px}.brand span:last-child{font-size:13px}.brand{letter-spacing:.6px;gap:7px}.brand b{letter-spacing:1.2px}header{gap:8px}header .outline{padding:8px 10px;font-size:12px;flex-shrink:0}header .outline span{display:none}}
 @media(max-width:380px){.brand span:last-child{display:none}}
+/* Canal network layer */
+.canal-legend{display:inline-flex;align-items:center;gap:6px;margin-left:13px}
+.canal-key{width:15px;border-top:2px solid #8fe3ff}
+.drain-key{width:15px;border-top:2px dashed #d9b27a}
+#canalsToggle{font-size:20px}
+@media(max-width:700px){.canal-legend{margin-left:8px}}
