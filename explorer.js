@@ -7,7 +7,7 @@ $('historyDate').max=localToday();
 function inRing(point,ring){let inside=false;for(let i=0,j=ring.length-1;i<ring.length;j=i++){const a=ring[i],b=ring[j];if((a[1]>point[1])!==(b[1]>point[1])&&point[0]<(b[0]-a[0])*(point[1]-a[1])/(b[1]-a[1])+a[0])inside=!inside;}return inside;}
 function inSindh(lon,lat){if(!boundary)return false;return boundary.features.some(f=>{const polys=f.geometry.type==='Polygon'?[f.geometry.coordinates]:f.geometry.coordinates;return polys.some(r=>inRing([lon,lat],r[0])&&!r.slice(1).some(h=>inRing([lon,lat],h)));});}
 function boxArea(b){return 6371**2*Math.abs((b[2]-b[0])*Math.PI/180*(Math.sin(b[3]*Math.PI/180)-Math.sin(b[1]*Math.PI/180)));}
-function updateProcessorLink(){const d=$('historyDate').value,ok=selectedBox&&/^\d{4}-\d{2}-\d{2}$/.test(d)&&$('historyDate').checkValidity()&&d>='2020-01-01'&&d<=$('historyDate').max;$('processDate').setAttribute('aria-disabled',String(!ok));if(ok)$('processDate').href=processorURL+'#'+'history=true;auto=true;date='+encodeURIComponent(d)+';box='+encodeURIComponent(JSON.stringify(selectedBox))+';';else $('processDate').removeAttribute('href');}
+function updateProcessorLink(){const d=$('historyDate').value,ok=selectedBox&&/^\d{4}-\d{2}-\d{2}$/.test(d)&&$('historyDate').checkValidity()&&d>='2020-01-01'&&d<=$('historyDate').max;$('processDate').setAttribute('aria-disabled',String(!ok));if(ok)$('processDate').href=processorURL+'#'+'history=true;auto=true;minclear='+MIN_CLEAR+';date='+encodeURIComponent(d)+';box='+encodeURIComponent(JSON.stringify(selectedBox))+';';else $('processDate').removeAttribute('href');}
 function missingForProcessor(){const d=$('historyDate');if(!selectedBox)return 'Draw an area on the map first. The calendar then shows which days are clear over it.';if(!d.value)return 'Pick a clear day (green) in the calendar.';return '';}
 $('historyDate').onchange=()=>{updateProcessorLink();const missing=missingForProcessor();$('historyStatus').textContent=missing||('Date '+$('historyDate').value+' ready. Use “Find clear days & export” to process it in Earth Engine. The map shows '+(analysis?.observationMode==='single-clear-day'?analysis.latestScene:'the saved multi-day snapshot')+' until you load the result.');};
 $('processDate').onclick=e=>{const missing=missingForProcessor();if(missing){e.preventDefault();$('historyStatus').textContent=missing;}};
@@ -38,11 +38,11 @@ const originalRenderLayer=renderLayer;renderLayer=function(){originalRenderLayer
 // The Earth Engine app's "Show result on Sindh map" button returns here as #analysis=<encodeURIComponent(JSON)>.
 function loadFromLink(){if(!location.hash.startsWith('#analysis='))return false;try{loadAnalysis(JSON.parse(decodeURIComponent(location.hash.slice(10))));}catch(err){$('historyPanel').open=true;$('historyStatus').textContent='The result link could not be loaded: '+err.message+' Rerun the day in Earth Engine.';}return true;}
 loadFromLink();window.addEventListener('hashchange',loadFromLink);
-// Clear-day calendar. A day is selectable only if Sentinel-2 SCL is 4/5/6 (vegetation, bare, water) at every 20 m
-// pixel of the area inside Sindh: the Earth Engine processor's rule without Cloud Score+, which exists only in Earth
-// Engine. Read from the public Earth Search catalogue and its cloud-optimised GeoTIFFs with HTTP range requests.
+// Clear-day calendar. A day is selectable only if Sentinel-2 SCL is 4/5/6 (vegetation, bare, water) at ≥ MIN_CLEAR of the
+// 20 m pixels of the area inside Sindh: the Earth Engine processor's rule without Cloud Score+, which exists only in Earth
+// Engine. 100% is unreachable for large areas: SCL leaves scattered 'unclassified'/medium-cloud pixels over sand and towns. Read from the public Earth Search catalogue and its cloud-optimised GeoTIFFs with HTTP range requests.
 const STAC='https://earth-search.aws.element84.com/v1/search',GEOTIFF_JS='https://cdn.jsdelivr.net/npm/geotiff@2.1.3/dist-browser/geotiff.js';
-const calCache=new Map();let calMonth=localToday().slice(0,7),calDays=new Map(),calToken=0,geotiffLoading=null;
+const MIN_CLEAR=99,calCache=new Map();let calMonth=localToday().slice(0,7),calDays=new Map(),calToken=0,geotiffLoading=null;
 function utm(lon,lat,zone){const a=6378137,f=1/298.257223563,k0=.9996,e2=f*(2-f),ep2=e2/(1-e2),p=lat*Math.PI/180,l=lon*Math.PI/180-((zone-1)*6-177)*Math.PI/180,N=a/Math.sqrt(1-e2*Math.sin(p)**2),T=Math.tan(p)**2,C=ep2*Math.cos(p)**2,A=Math.cos(p)*l,M=a*((1-e2/4-3*e2**2/64-5*e2**3/256)*p-(3*e2/8+3*e2**2/32+45*e2**3/1024)*Math.sin(2*p)+(15*e2**2/256+45*e2**3/1024)*Math.sin(4*p)-35*e2**3/3072*Math.sin(6*p));return[k0*N*(A+(1-T+C)*A**3/6+(5-18*T+T*T+72*C-58*ep2)*A**5/120)+5e5,k0*(M+N*Math.tan(p)*(A*A/2+(5-T+9*C+4*C*C)*A**4/24+(61-58*T+T*T+600*C-330*ep2)*A**6/720))];}
 function loadGeoTIFF(){if(window.GeoTIFF)return Promise.resolve();return geotiffLoading??=new Promise((ok,no)=>{const s=document.createElement('script');s.src=GEOTIFF_JS;s.onload=ok;s.onerror=()=>{geotiffLoading=null;no(Error('Could not load the image reader.'));};document.head.append(s);});}
 function sindhCrossings(lat){const xs=[];for(const f of boundary.features)for(const poly of f.geometry.type==='Polygon'?[f.geometry.coordinates]:f.geometry.coordinates)for(const r of poly)for(let i=0,j=r.length-1;i<r.length;j=i++){const a=r[i],b=r[j];if((a[1]>lat)!==(b[1]>lat))xs.push(a[0]+(lat-a[1])*(b[0]-a[0])/(b[1]-a[1]));}return xs.sort((a,b)=>a-b);}
@@ -53,29 +53,29 @@ async function sceneState(item,b,insideSindh){const scl=item.assets?.scl,epsg=Nu
  const [data]=await(await(await GeoTIFF.fromUrl(scl.href)).getImage()).readRasters({window:[c0,r0,c1,r1]}),w=c1-c0;
  // Over ≤20 km, UTM → lon/lat is affine to well under a pixel: express each pixel centre in box fractions (s east, q north).
  const [p0,p1,p2]=c,ux=[p2[0]-p0[0],p2[1]-p0[1]],uy=[p1[0]-p0[0],p1[1]-p0[1]],det=ux[0]*uy[1]-ux[1]*uy[0];
- for(let r=0;r<r1-r0;r++){const dy=t[5]+(r0+r+.5)*t[4]-p0[1];let row=null;for(let k=0;k<w;k++){const v=data[r*w+k];if(v===4||v===5||v===6)continue;
-  const dx=t[2]+(c0+k+.5)*t[0]-p0[0],s=(dx*uy[1]-dy*uy[0])/det,q=(ux[0]*dy-ux[1]*dx)/det;if(s<0||s>1||q<0||q>1)continue;
-  if(!insideSindh){const lon=b[0]+s*(b[2]-b[0]);row??=sindhCrossings(b[1]+q*(b[3]-b[1]));if(row.filter(x=>x<lon).length%2===0)continue;}
-  return'cloudy';}}
- return'clear';}
+ let total=0,ok=0;for(let r=0;r<r1-r0;r++){const dy=t[5]+(r0+r+.5)*t[4]-p0[1],lat=b[1]+((ux[0]*dy-ux[1]*(t[2]+(c0+.5)*t[0]-p0[0]))/det)*(b[3]-b[1]),row=insideSindh?null:sindhCrossings(lat);
+  for(let k=0;k<w;k++){const dx=t[2]+(c0+k+.5)*t[0]-p0[0],s=(dx*uy[1]-dy*uy[0])/det,q=(ux[0]*dy-ux[1]*dx)/det;if(s<0||s>1||q<0||q>1)continue;
+   if(row){const lon=b[0]+s*(b[2]-b[0]);let n=0;for(const x of row){if(x<lon)n++;else break;}if(n%2===0)continue;}
+   total++;const v=data[r*w+k];if(v===4||v===5||v===6)ok++;}}
+ return total?{pct:100*ok/total}:'unverified';}
 function scanMonth(b,month){const key=b.join(',')+'|'+month;if(calCache.has(key))return calCache.get(key);
  const job=(async()=>{const [y,m]=month.split('-').map(Number),end=new Date(Date.UTC(y,m,1)-1).toISOString();
   const res=await fetch(STAC,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({collections:['sentinel-2-l2a'],bbox:b,datetime:month+'-01T00:00:00Z/'+end,limit:100}),signal:AbortSignal.timeout(20000)});
   if(!res.ok)throw Error('The Sentinel-2 catalogue did not respond ('+res.status+').');const items=(await res.json()).features||[];
   if(items.length)await loadGeoTIFF();const inside=[[b[0],b[1]],[b[0],b[3]],[b[2],b[1]],[b[2],b[3]]].every(p=>inSindh(...p)),byDay=new Map();
   await Promise.all(items.map(async it=>{const day=it.properties.datetime.slice(0,10);let s;try{s=await sceneState(it,b,inside);}catch{s='unverified';}byDay.set(day,[...(byDay.get(day)||[]),s]);}));
-  const out=new Map();for(const [d,ss] of byDay)out.set(d,ss.includes('clear')?'clear':ss.includes('unverified')?'unverified':'cloudy');return out;})();
+  const out=new Map();for(const [d,ss] of byDay){const pct=Math.max(-1,...ss.map(x=>x.pct??-1));out.set(d,pct<0?{state:'unverified'}:{state:pct>=MIN_CLEAR?'clear':'cloudy',pct});/* a tile that contains the whole area decides */}return out;})();
  calCache.set(key,job);job.catch(()=>calCache.delete(key));return job;}
-const calTips={clear:'Clear at every pixel of your area',cloudy:'Sentinel-2 passed, but cloud, shadow or unclassified pixels cover part of your area',unverified:'Could not be checked here (area crosses a Sentinel-2 tile edge); Earth Engine will screen it',none:'No Sentinel-2 pass over your area'};
+const calTips={clear:'clear over your area',cloudy:'clear over your area; below the '+MIN_CLEAR+'% needed (cloud, shadow or unclassified pixels)',unverified:'Could not be checked here (area crosses a Sentinel-2 tile edge); Earth Engine will screen it',none:'No Sentinel-2 pass over your area'};
 function renderCalendar(){const [y,m]=calMonth.split('-').map(Number),first=new Date(Date.UTC(y,m-1,1)),daysIn=new Date(Date.UTC(y,m,0)).getUTCDate(),picked=$('historyDate').value;
  $('calTitle').textContent=first.toLocaleDateString('en-GB',{month:'long',year:'numeric',timeZone:'UTC'});$('calPrev').disabled=calMonth<='2020-01';$('calNext').disabled=calMonth>=$('historyDate').max.slice(0,7);
  const cells=['Mo','Tu','We','Th','Fr','Sa','Su'].map(d=>Object.assign(document.createElement('span'),{className:'cal-dow',textContent:d}));for(let i=(first.getUTCDay()+6)%7;i>0;i--)cells.push(document.createElement('span'));
- for(let d=1;d<=daysIn;d++){const iso=calMonth+'-'+String(d).padStart(2,'0'),state=selectedBox?calDays.get(iso)||'none':'none',b=document.createElement('button');b.type='button';b.textContent=d;b.className='cal-day '+state+(iso===picked?' selected':'');b.disabled=!(state==='clear'||state==='unverified')||iso>$('historyDate').max;b.title=selectedBox?calTips[state]:'Draw an area first';b.setAttribute('aria-label',iso+': '+b.title);b.setAttribute('aria-pressed',String(iso===picked));b.onclick=()=>{$('historyDate').value=iso;$('historyDate').onchange();renderCalendar();};cells.push(b);}
+ for(let d=1;d<=daysIn;d++){const iso=calMonth+'-'+String(d).padStart(2,'0'),info=selectedBox&&calDays.get(iso)||{state:'none'},state=info.state,b=document.createElement('button');b.type='button';b.textContent=d;b.className='cal-day '+state+(iso===picked?' selected':'');b.disabled=!(state==='clear'||state==='unverified')||iso>$('historyDate').max;b.title=!selectedBox?'Draw an area first':(info.pct!=null?info.pct.toFixed(info.pct>=99.95?0:1).replace(/^100\.0$/,'100')+'% '+calTips[state]:calTips[state]);b.setAttribute('aria-label',iso+': '+b.title);b.setAttribute('aria-pressed',String(iso===picked));b.onclick=()=>{$('historyDate').value=iso;$('historyDate').onchange();renderCalendar();};cells.push(b);}
  $('calGrid').replaceChildren(...cells);}
 async function loadCalendar(){const token=++calToken;calDays=new Map();renderCalendar();
  if(!selectedBox){$('calStatus').textContent='Draw an area first: only days that are clear over it can be picked.';return;}
  $('clearCalendar').setAttribute('aria-busy','true');$('calStatus').textContent='Checking the Sentinel-2 cloud mask at every 20 m pixel…';
- try{const days=await scanMonth(selectedBox,calMonth);if(token!==calToken)return;calDays=days;const clear=[...days.values()].filter(s=>s==='clear').length;$('calStatus').textContent=!days.size?'No Sentinel-2 passes over your area this month.':clear+' of '+days.size+' Sentinel-2 passes are clear over your area this month.'+(clear?'':' Try another month or a smaller area.');}
+ try{const days=await scanMonth(selectedBox,calMonth);if(token!==calToken)return;calDays=days;const clear=[...days.values()].filter(s=>s.state==='clear').length;$('calStatus').textContent=!days.size?'No Sentinel-2 passes over your area this month.':clear+' of '+days.size+' Sentinel-2 passes are at least '+MIN_CLEAR+'% clear over your area this month. Hover a day for its clear share.'+(clear?'':' Try another month or a smaller area.');}
  catch(err){if(token===calToken)$('calStatus').textContent=err.message+' Try again shortly.';}
  finally{if(token===calToken){$('clearCalendar').removeAttribute('aria-busy');renderCalendar();}}}
 function calendarAreaChanged(){$('historyDate').value='';updateProcessorLink();loadCalendar();}
