@@ -13,13 +13,17 @@ Open https://code.earthengine.google.com/, select the registered project, paste 
 
 For the web workspace, serve the repository root with `python -m http.server 8765`, then visit http://localhost:8765. The setup page explains analysis JSON transfer.
 
+## Dry-land reconstruction update
+
+See [DRY_SURFACE.md](DRY_SURFACE.md) for v3 behavior, source reconciliation, verification and rollout requirements. The older validation records below describe earlier published versions.
+
 ## Scientific limits
 
-Sentinel-2 uses latest-valid pixel mosaics, SCL classes 4/5/6/7, MNDWI green/SWIR, with an adjustable threshold. SCL masking does not guarantee perfect cloud removal. Sentinel-1 uses ascending IW VV, incidence-angle and backscatter validity masks, 30 m median filtering in linear power, slope < 5 degrees, and an adjustable VV threshold. It is not a trained classifier or validated flood product. SAR false positives and negatives need local assessment.
+Sentinel-2 uses latest-valid pixel mosaics, SCL classes 4/5/6 plus Cloud Score+ ≥ 0.65, MNDWI green/SWIR, with an adjustable threshold. SCL masking does not guarantee perfect cloud removal. Sentinel-1 uses ascending IW VV, incidence-angle and backscatter validity masks, 30 m median filtering in linear power, slope < 5 degrees, and an adjustable VV threshold. It is not a trained classifier or validated flood product. SAR false positives and negatives need local assessment.
 
 No-data remains distinct from dry land. Dates vary spatially. Area and coverage estimates are calculated at 100 m for interactive performance, not exact 20 m polygon areas. Boundary is geoBoundaries gbOpen PAK ADM1, public domain.
 
-The revised reconstruction keeps the satellite basemap visible on unchanged land at all zooms. Only detected water and recently dried patches receive overlays. Recently dried means the latest valid optical pixel before the selected window was wet and the selected current classifier says dry; it does not compare with Google imagery, whose pixel dates are unavailable. Dry patches use newest historical dry Sentinel-2 pixels, while water uses AI material modulated by optical brightness and clipped to detected water. The native app has separate water opacity and dry-fill visibility controls. Full satellite-level detail in reconstructed patches is not achieved: it requires licensed high-resolution source imagery, particularly dry-season coverage. Sentinel water boundaries remain resolution-limited. The generated material is reused across analyses; observation masks are recalculated. It does not edit Google imagery or recover unseen terrain. Historical dry fill can be old; the result is an experimental composite, not a verified current photograph. An unconstrained AI scene edit was rejected because it widened rivers. The deployed method uses AI only for surface appearance.
+The v3 reconstruction uses clear Sentinel-2 colour over all observed dry land in the selected period, including where the older basemap still shows water. It retains the selected geography at Sentinel resolution (10–20 m), not invented high-resolution terrain. Water appearance remains synthetic. Unknown pixels are grey, and mapped structures still reveal the reference imagery. See [DRY_SURFACE.md](DRY_SURFACE.md) for the full rendering contract and deployment status.
 
 ## Security and connections
 

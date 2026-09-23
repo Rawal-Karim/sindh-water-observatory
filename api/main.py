@@ -17,6 +17,7 @@ from collections import OrderedDict, defaultdict, deque
 import ee
 import google.auth
 from flask import Flask, jsonify, request
+from surface import surfaces, RENDERING, SURFACE_INFO
 
 PROJECT = os.environ.get('EE_PROJECT', 'ee-rawal-karim23')
 ALLOWED_ORIGINS = {'https://rawal-karim.github.io', 'http://localhost:8765'}
@@ -131,8 +132,9 @@ def analyze(box, day, min_clear, threshold):
     clear_pct = 100 * (s.get('valid') or 0) / total if total else 0
     material = (ee.Image(WATER_TEXTURE_ASSET).select([0, 1, 2], RGB).resample('bilinear')
                 .divide(255).pow(1.3).multiply(3000).updateMask(water).clip(geom))
+    reconstruction, land, unknown = surfaces(image, water, material, geom)
     return {
-        'schemaVersion': 1, 'rendering': 'satellite-preserving-overlays-v2', 'region': 'Sindh',
+        'schemaVersion': 1, 'rendering': RENDERING, 'surface': SURFACE_INFO, 'region': 'Sindh',
         'method': 'Sentinel-2 MNDWI', 'observationMode': 'single-clear-day', 'source': 'earth-engine-service',
         'area': box, 'generatedAt': dt.datetime.utcnow().isoformat(timespec='seconds') + 'Z',
         'windowStart': day, 'windowEnd': day, 'latestScene': day,
@@ -142,7 +144,10 @@ def analyze(box, day, min_clear, threshold):
         'cloudScreen': {'scl': [4, 5, 6], 'cs_cdf': 0.65, 'requiredCoverage': min_clear, 'scale': 20},
         'layers': {
             'water': {'url': tile_url(water.selfMask(), {'palette': ['2fb9ed']})},
-            'reconstruction': {'url': tile_url(material, VIS_RGB)},
+            'reconstruction': {'url': tile_url(reconstruction, VIS_RGB)},
+            'dry': {'url': tile_url(land, VIS_RGB)},
+            'waterAppearance': {'url': tile_url(material, VIS_RGB)},
+            'unknown': {'url': tile_url(unknown, {'palette': ['747a81']})},
             'photo': {'url': tile_url(image, VIS_RGB)},
         },
     }
