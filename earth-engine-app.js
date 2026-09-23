@@ -199,7 +199,7 @@ function strictS2(img){
   var index=img.select('B3').subtract(img.select('B11')).divide(sum).rename('mndwi').updateMask(sum.gt(0));
   return img.select(RGB).addBands(index).updateMask(clear).copyProperties(img,['system:time_start']);
 }
-function scanClearDays(){
+function scanClearDays(auto){
   if(!historyGeometry){historyStatus.setValue('Select an area first.');return;}
   var month=historyMonth.getValue(),today=new Date().toISOString().slice(0,10);
   if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)||month<'2020-01'||month>today.slice(0,7)){historyStatus.setValue('Choose a month from 2020-01 through '+today.slice(0,7)+'.');return;}
@@ -218,8 +218,10 @@ function scanClearDays(){
     if(error){historyStatus.setValue('Cloud screening failed: '+error);return;}
     historyDates=list||[];clearDay.items().reset(historyDates);
     if(!historyDates.length){historyStatus.setValue('No fully clear, fully observed days in this month for this area. Try another month or a smaller area.');return;}
-    clearDay.setValue(historyDates.indexOf(requestedDay)>=0?requestedDay:historyDates[historyDates.length-1]);
-    historyStatus.setValue(historyDates.length+' clear acquisition days found. Select one to analyze.');historyAnalyze.setDisabled(false);
+    var exact=historyDates.indexOf(requestedDay)>=0,nearest=historyDates.reduce(function(best,d){return Math.abs(Date.parse(d)-Date.parse(requestedDay))<Math.abs(Date.parse(best)-Date.parse(requestedDay))?d:best;},historyDates[0]);
+    clearDay.setValue(nearest);historyAnalyze.setDisabled(false);
+    historyStatus.setValue(historyDates.length+' clear acquisition days found. '+(exact?requestedDay+' is clear.':requestedDay+' did not pass cloud screening; nearest clear day '+nearest+' selected.')+' Select one to analyze.');
+    if(auto===true&&exact)analyzeClearDay(); // true only from a web-map link; a button click passes the widget
   });
 }
 function analyzeClearDay(){
@@ -250,3 +252,4 @@ function analyzeClearDay(){
 }
 var suppliedBox=ui.url.get('box',null);if(suppliedBox)setHistoryBox(suppliedBox);
 if(ui.url.get('history',false))showHistory();
+if(suppliedBox&&historyGeometry)scanClearDays(true); // web-map links (#history=true;date=…;box=[…]) scan without waiting for a click
