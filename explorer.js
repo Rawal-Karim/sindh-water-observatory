@@ -134,3 +134,4 @@ async function analyzeDay(iso){if(!selectedBox)return;const token=++dayToken,b=s
 const renderWithPhoto=renderLayer;renderLayer=function(){renderWithPhoto();if(photoLayer){map.removeLayer(photoLayer);photoLayer=null;}const url=analysis?.observationMode==='single-clear-day'&&mode==='water'&&analysis.layers?.photo?.url;
  if(url&&!googleReady){photoLayer=L.tileLayer(url,{maxZoom:20,zIndex:2,opacity:Number($('opacity').value)/100,attribution:'Sentinel-2 true colour, '+analysis.latestScene}).addTo(map);overlay?.setZIndex(3);}};
 $('opacity').addEventListener('input',e=>photoLayer?.setOpacity(Number(e.target.value)/100));
+if(analysis?.observationMode==='single-clear-day')renderLayer();// a #analysis= link was loaded before this wrapper existed
