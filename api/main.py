@@ -91,7 +91,8 @@ def strict_s2(img):
 
 
 def tile_url(image, vis):
-    return ee.data.getMapId({'image': image, 'vis_params': vis})['tile_fetcher'].url_format
+    # Image.getMapId applies the palette/stretch; raw ee.data.getMapId ignored it (grey 0/1 tiles).
+    return image.getMapId(vis)['tile_fetcher'].url_format
 
 
 def analyze(box, day, min_clear, threshold):
