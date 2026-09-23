@@ -173,3 +173,8 @@ const areaChangedBase=calendarAreaChanged;calendarAreaChanged=function(){areaCha
 $('calGrid').addEventListener('click',e=>{if(e.target.closest('.cal-day:not(:disabled)'))setSheet('peek');});
 // With the sheet down on a phone, the day's result would be out of sight: show it briefly over the map.
 new MutationObserver(()=>{const r=$('dayResult');if(!phone.matches||r.hidden||sheetState!=='peek'||!r.textContent.startsWith('Earth Engine'))return;const n=$('loadNote');setTimeout(()=>{n.textContent=r.textContent.replace(/ The map shows.*$/,'');n.classList.add('toast');n.hidden=false;clearTimeout(n._t);n._t=setTimeout(()=>{n.hidden=true;n.classList.remove('toast');},7000);},450);}).observe($('dayResult'),{childList:true,characterData:true,subtree:true});
+// Header: which days the province snapshot combines. Single-day results do not change it.
+function showSnapshotDates(d){if(d.observationMode==='single-clear-day'||!d.windowStart||!d.windowEnd)return;const a=new Date(d.windowStart+'T00:00:00Z'),b=new Date(d.windowEnd+'T00:00:00Z'),days=d.windowDays||Math.round((b-a)/864e5)+1,M='Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec'.split(' '),f=(x,y)=>x.getUTCDate()+' '+M[x.getUTCMonth()]+(y?' '+x.getUTCFullYear():'');
+ $('snapshotRange').textContent=f(a,a.getUTCFullYear()!==b.getUTCFullYear())+' – '+f(b,true)+' ('+days+' days)';
+ $('snapshotDates').title='Sentinel-2 water across Sindh: each place shows its latest clear view in these days. Newest image '+d.latestScene+(d.source==='daily-snapshot'?'. Updated every morning at 06:00 PKT.':'.');$('snapshotDates').hidden=false;}
+const loadAnalysisWithDates=loadAnalysis;loadAnalysis=function(d){loadAnalysisWithDates(d);showSnapshotDates(d);};if(analysis)showSnapshotDates(analysis);

@@ -83,3 +83,9 @@ dialog h2{font-size:22px}
 }
 /* Phones held sideways: keep the header slim so the map keeps its height. */
 @media(max-height:500px) and (min-width:701px){header{height:46px;padding:0 14px}main{height:calc(100dvh - 46px)}.brand{font-size:14px}.brand .mark{transform:scale(.8)}aside{padding-top:12px}}
+/* Header: the dates the province snapshot combines (updated daily). */
+.snapshot-dates{margin-left:auto;display:flex;flex-direction:column;align-items:flex-end;line-height:1.25;color:var(--green);text-align:right}
+.snapshot-label{font-size:10px;font-weight:700;letter-spacing:1.3px;text-transform:uppercase;color:#617978}
+.snapshot-dates strong{font-size:14px;font-weight:600;white-space:nowrap}
+@media(max-width:700px){.snapshot-dates strong{font-size:12px}.snapshot-label{font-size:9px}.brand span:last-child{font-size:13px}.brand{letter-spacing:.6px;gap:7px}.brand b{letter-spacing:1.2px}header{gap:8px}header .outline{padding:8px 10px;font-size:12px;flex-shrink:0}header .outline span{display:none}}
+@media(max-width:380px){.brand span:last-child{display:none}}
