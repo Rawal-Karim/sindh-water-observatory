@@ -35,3 +35,11 @@ aside>*{flex-shrink:0}
 .cal-legend .key{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px;border:1px solid #dce4df}
 .cal-legend .key.clear{background:#e3f4ec;border-color:#9fd3bb}.cal-legend .key.cloudy{background:#f1f4f2}
 #historyPanel #calStatus{margin:6px 0 0}
+/* Loading bar across the top of the map; hidden when idle. */
+.load-bar{position:absolute;top:0;left:0;right:0;height:4px;z-index:1000;background:rgba(255,255,255,.3);overflow:hidden;pointer-events:none}
+.load-bar span{display:block;height:100%;width:0;background:linear-gradient(90deg,#2fb9ed,#7de4d0);transition:width .3s ease}
+.load-note{position:absolute;top:12px;left:50%;transform:translateX(-50%);z-index:1000;max-width:calc(100% - 32px);background:rgba(12,39,44,.88);color:#fff;font-size:12px;padding:6px 12px;border-radius:14px;pointer-events:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.map-heading{top:44px}
+.day-result{font-size:12px;line-height:1.5;margin:8px 0 0;padding:8px;border-radius:5px;background:#eef6f2;color:#17583f}
+.day-result.error{background:#fbeeee;color:#8a2c2c}
+.leaflet-image-layer.day-preview{image-rendering:pixelated}

@@ -63,22 +63,72 @@ function scanMonth(b,month){const key=b.join(',')+'|'+month;if(calCache.has(key)
   const res=await fetch(STAC,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({collections:['sentinel-2-l2a'],bbox:b,datetime:month+'-01T00:00:00Z/'+end,limit:100}),signal:AbortSignal.timeout(20000)});
   if(!res.ok)throw Error('The Sentinel-2 catalogue did not respond ('+res.status+').');const items=(await res.json()).features||[];
   if(items.length)await loadGeoTIFF();const inside=[[b[0],b[1]],[b[0],b[3]],[b[2],b[1]],[b[2],b[3]]].every(p=>inSindh(...p)),byDay=new Map();
-  await Promise.all(items.map(async it=>{const day=it.properties.datetime.slice(0,10);let s;try{s=await sceneState(it,b,inside);}catch{s='unverified';}byDay.set(day,[...(byDay.get(day)||[]),s]);}));
-  const out=new Map();for(const [d,ss] of byDay){const pct=Math.max(-1,...ss.map(x=>x.pct??-1));out.set(d,pct<0?{state:'unverified'}:{state:pct>=MIN_CLEAR?'clear':'cloudy',pct});/* a tile that contains the whole area decides */}return out;})();
+  await Promise.all(items.map(async it=>{const day=it.properties.datetime.slice(0,10);let s;try{s=await sceneState(it,b,inside);}catch{s='unverified';}if(s.pct!=null)s.item=it;byDay.set(day,[...(byDay.get(day)||[]),s]);}));
+  const out=new Map();for(const [d,ss] of byDay){const best=ss.filter(x=>x.pct!=null).sort((a,b)=>b.pct-a.pct)[0];out.set(d,!best?{state:'unverified'}:{state:best.pct>=MIN_CLEAR?'clear':'cloudy',pct:best.pct,item:best.item});/* a tile that contains the whole area decides */}return out;})();
  calCache.set(key,job);job.catch(()=>calCache.delete(key));return job;}
 const calTips={clear:'clear over your area',cloudy:'clear over your area; below the '+MIN_CLEAR+'% needed (cloud, shadow or unclassified pixels)',unverified:'Could not be checked here (area crosses a Sentinel-2 tile edge); Earth Engine will screen it',none:'No Sentinel-2 pass over your area'};
 function renderCalendar(){const [y,m]=calMonth.split('-').map(Number),first=new Date(Date.UTC(y,m-1,1)),daysIn=new Date(Date.UTC(y,m,0)).getUTCDate(),picked=$('historyDate').value;
  $('calTitle').textContent=first.toLocaleDateString('en-GB',{month:'long',year:'numeric',timeZone:'UTC'});$('calPrev').disabled=calMonth<='2020-01';$('calNext').disabled=calMonth>=$('historyDate').max.slice(0,7);
  const cells=['Mo','Tu','We','Th','Fr','Sa','Su'].map(d=>Object.assign(document.createElement('span'),{className:'cal-dow',textContent:d}));for(let i=(first.getUTCDay()+6)%7;i>0;i--)cells.push(document.createElement('span'));
- for(let d=1;d<=daysIn;d++){const iso=calMonth+'-'+String(d).padStart(2,'0'),info=selectedBox&&calDays.get(iso)||{state:'none'},state=info.state,b=document.createElement('button');b.type='button';b.textContent=d;b.className='cal-day '+state+(iso===picked?' selected':'');b.disabled=!(state==='clear'||state==='unverified')||iso>$('historyDate').max;b.title=!selectedBox?'Draw an area first':(info.pct!=null?info.pct.toFixed(info.pct>=99.95?0:1).replace(/^100\.0$/,'100')+'% '+calTips[state]:calTips[state]);b.setAttribute('aria-label',iso+': '+b.title);b.setAttribute('aria-pressed',String(iso===picked));b.onclick=()=>{$('historyDate').value=iso;$('historyDate').onchange();renderCalendar();};cells.push(b);}
+ for(let d=1;d<=daysIn;d++){const iso=calMonth+'-'+String(d).padStart(2,'0'),info=selectedBox&&calDays.get(iso)||{state:'none'},state=info.state,b=document.createElement('button');b.type='button';b.textContent=d;b.className='cal-day '+state+(iso===picked?' selected':'');b.disabled=!(state==='clear'||state==='unverified')||iso>$('historyDate').max;b.title=!selectedBox?'Draw an area first':(info.pct!=null?info.pct.toFixed(info.pct>=99.95?0:1).replace(/^100\.0$/,'100')+'% '+calTips[state]:calTips[state]);b.setAttribute('aria-label',iso+': '+b.title);b.setAttribute('aria-pressed',String(iso===picked));b.onclick=()=>{$('historyDate').value=iso;$('historyDate').onchange();renderCalendar();analyzeDay(iso);};cells.push(b);}
  $('calGrid').replaceChildren(...cells);}
 async function loadCalendar(){const token=++calToken;calDays=new Map();renderCalendar();
  if(!selectedBox){$('calStatus').textContent='Draw an area first: only days that are clear over it can be picked.';return;}
- $('clearCalendar').setAttribute('aria-busy','true');$('calStatus').textContent='Checking the Sentinel-2 cloud mask at every 20 m pixel…';
+ $('clearCalendar').setAttribute('aria-busy','true');$('calStatus').textContent='Checking the Sentinel-2 cloud mask at every 20 m pixel…';progress.start('Finding clear days…');
  try{const days=await scanMonth(selectedBox,calMonth);if(token!==calToken)return;calDays=days;const clear=[...days.values()].filter(s=>s.state==='clear').length;$('calStatus').textContent=!days.size?'No Sentinel-2 passes over your area this month.':clear+' of '+days.size+' Sentinel-2 passes are at least '+MIN_CLEAR+'% clear over your area this month. Hover a day for its clear share.'+(clear?'':' Try another month or a smaller area.');}
  catch(err){if(token===calToken)$('calStatus').textContent=err.message+' Try again shortly.';}
- finally{if(token===calToken){$('clearCalendar').removeAttribute('aria-busy');renderCalendar();}}}
-function calendarAreaChanged(){$('historyDate').value='';updateProcessorLink();loadCalendar();}
+ finally{progress.done();if(token===calToken){$('clearCalendar').removeAttribute('aria-busy');renderCalendar();}}}
+function calendarAreaChanged(){$('historyDate').value='';dayToken++;clearDayPreview();$('dayResult').hidden=true;updateProcessorLink();loadCalendar();}
 $('calPrev').onclick=()=>{const [y,m]=calMonth.split('-').map(Number),d=new Date(Date.UTC(y,m-2,1));calMonth=d.toISOString().slice(0,7);loadCalendar();};
 $('calNext').onclick=()=>{const [y,m]=calMonth.split('-').map(Number),d=new Date(Date.UTC(y,m,1));calMonth=d.toISOString().slice(0,7);loadCalendar();};
 loadCalendar();
+// Loading bar: start/done are counted so overlapping jobs keep it up; between steps it creeps towards 90%.
+const progress=(()=>{let jobs=0,value=0,timer=null;const bar=$('loadBar'),fill=bar.firstElementChild,note=$('loadNote');
+ const paint=()=>{fill.style.width=(value*100).toFixed(1)+'%';bar.setAttribute('aria-valuenow',Math.round(value*100));};
+ return{start(label){if(!jobs++){clearTimeout(timer?.hide);value=.04;fill.style.transition='none';paint();fill.offsetWidth;fill.style.transition='';}note.textContent=label||'';note.hidden=!label;bar.hidden=false;clearInterval(timer?.creep);timer={creep:setInterval(()=>{value+=(.9-value)*.025;paint();},200)};},
+  step(v,label){value=Math.max(value,v);paint();if(label){note.textContent=label;note.hidden=false;}},
+  done(){if(jobs&&--jobs)return;clearInterval(timer?.creep);value=1;paint();timer={hide:setTimeout(()=>{if(jobs)return;bar.hidden=true;note.hidden=true;value=0;paint();},400)};}};})();
+// Clicking a day: an instant in-browser estimate from the same Sentinel-2 files, then the Earth Engine result
+// from the sindh-water-api Cloud Run service (the published app's analysis, run as its own service account).
+const WATER_API='https://sindh-water-api-631421569957.asia-south1.run.app/analyze';
+let dayToken=0,dayPreview=null,photoLayer=null;
+const fmtDay=iso=>new Date(iso+'T00:00:00Z').toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric',timeZone:'UTC'});
+function clearDayPreview(){if(dayPreview){if(dayPreview.setMap)dayPreview.setMap(null);else map.removeLayer(dayPreview);dayPreview=null;}}
+function dayResult(text,error){const el=$('dayResult');el.textContent=text;el.classList.toggle('error',!!error);el.hidden=!text;}
+async function previewWater(item,b,onStep,signal){const epsg=+item.properties['proj:epsg'],zone=epsg-32600,t=item.assets.scl['proj:transform'],c=[[b[0],b[1]],[b[0],b[3]],[b[2],b[1]],[b[2],b[3]]].map(p=>utm(p[0],p[1],zone)),xs=c.map(p=>p[0]),ys=c.map(p=>p[1]);
+ const c0=Math.floor((Math.min(...xs)-t[2])/t[0]),c1=Math.ceil((Math.max(...xs)-t[2])/t[0]),r0=Math.floor((Math.max(...ys)-t[5])/t[4]),r1=Math.ceil((Math.min(...ys)-t[5])/t[4]),w=c1-c0,h=r1-r0;let loaded=0;
+ // green is 10 m: its first overview is the 20 m grid shared with SCL and SWIR, and a quarter of the download.
+ const read=async(key,level)=>{const img=await(await GeoTIFF.fromUrl(item.assets[key].href)).getImage(level),[d]=await img.readRasters({window:[c0,r0,c1,r1],samples:[0],signal});onStep(.1+.4*++loaded/3);return d;};
+ const [scl,green,swir]=await Promise.all([read('scl',0),read('green',1),read('swir16',0)]);
+ // S2_SR_HARMONIZED in Earth Engine subtracts the 1000 DN offset and clamps at 0; negative SWIR over water becomes 0.
+ const cls=i=>{const v=scl[i];if(v!==4&&v!==5&&v!==6)return 2;const g=Math.max(green[i]-1000,0),s2=Math.max(swir[i]-1000,0);return g+s2>0&&g>s2?1:0;};
+ const inside=[[b[0],b[1]],[b[0],b[3]],[b[2],b[1]],[b[2],b[3]]].every(p=>inSindh(...p)),[p0,p1,p2]=c,ux=[p2[0]-p0[0],p2[1]-p0[1]],uy=[p1[0]-p0[0],p1[1]-p0[1]],det=ux[0]*uy[1]-ux[1]*uy[0];
+ let total=0,clear=0,wet=0;for(let r=0;r<h;r++){const dy=t[5]+(r0+r+.5)*t[4]-p0[1],row=inside?null:sindhCrossings(b[1]+((ux[0]*dy-ux[1]*(t[2]+(c0+.5)*t[0]-p0[0]))/det)*(b[3]-b[1]));
+  for(let k=0;k<w;k++){const dx=t[2]+(c0+k+.5)*t[0]-p0[0],S=(dx*uy[1]-dy*uy[0])/det,Q=(ux[0]*dy-ux[1]*dx)/det;if(S<0||S>1||Q<0||Q>1)continue;if(row){const lon=b[0]+S*(b[2]-b[0]);let n=0;for(const x of row){if(x<lon)n++;else break;}if(n%2===0)continue;}
+   total++;const v=cls(r*w+k);if(v<2){clear++;if(v===1)wet++;}}}
+ // Draw on a lon/lat grid so Leaflet can place it as a plain image: each output pixel samples the UTM window.
+ const W=Math.min(1600,Math.max(2,Math.round(w*1.2))),H=Math.min(1600,Math.max(2,Math.round(h*1.2))),canvas=document.createElement('canvas');canvas.width=W;canvas.height=H;
+ const ctx=canvas.getContext('2d'),out=ctx.createImageData(W,H);
+ for(let y=0;y<H;y++){const lat=b[3]-(y+.5)/H*(b[3]-b[1]),row=inside?null:sindhCrossings(lat);for(let x=0;x<W;x++){const lon=b[0]+(x+.5)/W*(b[2]-b[0]);if(row){let n=0;for(const v of row){if(v<lon)n++;else break;}if(n%2===0)continue;}
+  const [e,nn]=utm(lon,lat,zone),k=Math.floor((e-t[2])/t[0])-c0,r=Math.floor((nn-t[5])/t[4])-r0;if(k<0||r<0||k>=w||r>=h)continue;const v=cls(r*w+k),o=(y*W+x)*4;
+  if(v===1){out.data[o]=47;out.data[o+1]=185;out.data[o+2]=237;out.data[o+3]=230;}else if(v===2){out.data[o]=190;out.data[o+1]=198;out.data[o+2]=194;out.data[o+3]=150;}}}
+ ctx.putImageData(out,0,0);return{url:canvas.toDataURL(),waterKm2:wet*400/1e6,clearPct:total?100*clear/total:0};}
+async function analyzeDay(iso){if(!selectedBox)return;const token=++dayToken,b=selectedBox.slice(),info=calDays.get(iso);let eeDone=false;const previewStop=new AbortController();clearDayPreview();dayResult('');progress.start('Detecting water on '+fmtDay(iso)+'…');
+ const current=()=>token===dayToken;
+ // Earth Engine and the in-browser estimate run side by side; the preview only shows while Earth Engine is still working.
+ const eeJob=fetch(WATER_API+'?'+new URLSearchParams({box:b.join(','),date:iso,minclear:MIN_CLEAR}),{signal:AbortSignal.timeout(150000)})
+  .then(async r=>{const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d.error||'The Earth Engine service answered '+r.status+'.');return d;})
+  .then(d=>{if(!current())return;eeDone=true;previewStop.abort();if(!(d.layers?.photo?.url||'').startsWith('https://earthengine.googleapis.com/'))delete d.layers.photo;
+   clearDayPreview();loadAnalysis(d);
+   dayResult('Earth Engine, '+fmtDay(iso)+': '+d.waterKm2.toFixed(d.waterKm2<10?3:2)+' km² of water · '+d.coveragePercent.toFixed(1)+'% of the area clear'+(d.meetsMinClear?'':' (Cloud Score+ masked more than the calendar showed)')+'. The map shows that day’s Sentinel-2 photo under the water.');})
+  .catch(err=>{if(current())dayResult((dayPreview?'The quick preview is shown, but ':'')+(err.name==='TimeoutError'?'Earth Engine took too long. Try again.':err.message),true);});
+ const previewJob=(async()=>{if(!info?.item)return;await loadGeoTIFF();const p=await previewWater(info.item,b,v=>{if(!eeDone)progress.step(v);},previewStop.signal);if(!current()||eeDone)return;
+  dayPreview=googleReady?new google.maps.GroundOverlay(p.url,{west:b[0],south:b[1],east:b[2],north:b[3]},{clickable:false,map:googleMap}):L.imageOverlay(p.url,[[b[1],b[0]],[b[3],b[2]]],{interactive:false,className:'day-preview',zIndex:5}).addTo(map);
+  $('mapMode').textContent='Quick preview · '+iso+' · selected area';progress.step(.55,'Earth Engine is analysing '+fmtDay(iso)+'…');
+  dayResult('Quick preview: about '+p.waterKm2.toFixed(p.waterKm2<10?2:1)+' km² of water ('+p.clearPct.toFixed(1)+'% of the area clear; grey = cloud or shadow). Earth Engine is computing the exact figure…');})()
+  .catch(()=>{/* the preview is optional; Earth Engine still answers */});
+ // The bar ends with Earth Engine's answer; only if Earth Engine failed does it wait for the preview.
+ await eeJob;if(!eeDone)await previewJob;progress.done();}
+// That day's true-colour photo sits under the water layer for single-day results.
+const renderWithPhoto=renderLayer;renderLayer=function(){renderWithPhoto();if(photoLayer){map.removeLayer(photoLayer);photoLayer=null;}const url=analysis?.observationMode==='single-clear-day'&&mode!=='reference'&&analysis.layers?.photo?.url;
+ if(url&&!googleReady){photoLayer=L.tileLayer(url,{maxZoom:20,zIndex:2,attribution:'Sentinel-2 true colour, '+analysis.latestScene}).addTo(map);overlay?.setZIndex(3);}};
