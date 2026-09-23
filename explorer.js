@@ -36,7 +36,7 @@ $('searchForm').onsubmit=async e=>{e.preventDefault();const q=$('placeQuery').va
 
 const originalRenderLayer=renderLayer;renderLayer=function(){originalRenderLayer();$('mapMode').textContent={reference:'Satellite reference',water:'Detected water',reconstruction:'Synthetic reconstruction'}[mode];if(mode!=='reference'&&analysis?.observationMode==='single-clear-day')$('mapMode').textContent+=' · '+analysis.latestScene+' · selected area';};
 // The Earth Engine app's "Show result on Sindh map" button returns here as #analysis=<encodeURIComponent(JSON)>.
-function loadFromLink(){if(!location.hash.startsWith('#analysis='))return false;try{loadAnalysis(JSON.parse(decodeURIComponent(location.hash.slice(10))));}catch(err){$('historyPanel').open=true;$('historyStatus').textContent='The result link could not be loaded: '+err.message+' Rerun the day in Earth Engine.';}return true;}
+function loadFromLink(){if(!location.hash.startsWith('#analysis='))return false;try{loadAnalysis(JSON.parse(decodeURIComponent(location.hash.slice(10))));window.analysisFromLink=true;history.replaceState(null,'',location.pathname+location.search);/* shown once: a reload returns to the default view */}catch(err){$('historyPanel').open=true;$('historyStatus').textContent='The result link could not be loaded: '+err.message+' Rerun the day in Earth Engine.';}return true;}
 loadFromLink();window.addEventListener('hashchange',loadFromLink);
 // Clear-day calendar. A day is selectable only if Sentinel-2 SCL is 4/5/6 (vegetation, bare, water) at ≥ MIN_CLEAR of the
 // 20 m pixels of the area inside Sindh: the Earth Engine processor's rule without Cloud Score+, which exists only in Earth

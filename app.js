@@ -1,6 +1,6 @@
 'use strict';
 const $=id=>document.getElementById(id);
-fetch('analysis.json').then(r=>{if(!r.ok)throw Error('No saved analysis');return r.json();}).then(d=>{if(!location.hash.startsWith('#analysis='))loadAnalysis(d);}).catch(()=>{});
+fetch('analysis.json').then(r=>{if(!r.ok)throw Error('No saved analysis');return r.json();}).then(d=>{if(!window.analysisFromLink&&!location.hash.startsWith('#analysis='))loadAnalysis(d);}).catch(()=>{});
 const places={kotri_barrage:[25.44238,68.31601,17],sukkur_barrage:[27.67998,68.84556,16],guddu_barrage:[28.41885,69.7129,16],sindh:[26.1,68.5,7],manchar:[26.43,67.67,11],sukkur:[27.69,68.85,12],hyderabad:[25.39,68.36,12],delta:[24.15,67.57,10],karachi:[24.86,67.02,11]};
 let boundary,analysis,mode='reference',overlay,googleMap,googleOverlay,googleReady=false;
 const map=L.map('map',{zoomControl:false,minZoom:6,maxZoom:20,maxBounds:[[22,65],[30,72]],maxBoundsViscosity:.8}).setView([26.1,68.5],7);
