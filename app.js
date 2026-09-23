@@ -1,12 +1,12 @@
 'use strict';
 const $=id=>document.getElementById(id);
-fetch('analysis.json').then(r=>{if(!r.ok)throw Error('No saved analysis');return r.json();}).then(d=>loadAnalysis(d)).catch(()=>{});
+fetch('analysis.json').then(r=>{if(!r.ok)throw Error('No saved analysis');return r.json();}).then(d=>{if(!location.hash.startsWith('#analysis='))loadAnalysis(d);}).catch(()=>{});
 const places={kotri_barrage:[25.44238,68.31601,17],sukkur_barrage:[27.67998,68.84556,16],guddu_barrage:[28.41885,69.7129,16],sindh:[26.1,68.5,7],manchar:[26.43,67.67,11],sukkur:[27.69,68.85,12],hyderabad:[25.39,68.36,12],delta:[24.15,67.57,10],karachi:[24.86,67.02,11]};
 let boundary,analysis,mode='reference',overlay,googleMap,googleOverlay,googleReady=false;
 const map=L.map('map',{zoomControl:false,minZoom:6,maxZoom:20,maxBounds:[[22,65],[30,72]],maxBoundsViscosity:.8}).setView([26.1,68.5],7);
 L.control.zoom({position:'topright'}).addTo(map);
 L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{attribution:'Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community',maxZoom:19}).addTo(map).on('tileerror',()=>notice('Reference tiles could not load','Check your connection or connect Google satellite.'));
-fetch('sindh.geojson').then(r=>{if(!r.ok)throw Error('Boundary unavailable');return r.json()}).then(data=>{boundary=data;L.geoJSON(data,{interactive:false,style:{color:'#e0eac0',weight:1.7,fillColor:'#d9ecad',fillOpacity:.025}}).addTo(map);fit();}).catch(e=>notice('Province outline unavailable',e.message));
+fetch('sindh.geojson').then(r=>{if(!r.ok)throw Error('Boundary unavailable');return r.json()}).then(data=>{boundary=data;L.geoJSON(data,{interactive:false,style:{color:'#e0eac0',weight:1.7,fillColor:'#d9ecad',fillOpacity:.025}}).addTo(map);if(analysis?.observationMode!=='single-clear-day')fit();}).catch(e=>notice('Province outline unavailable',e.message));
 Object.entries(places).filter(([k])=>k!=='sindh'&&!k.endsWith('_barrage')).forEach(([k,v])=>L.circleMarker(v,{radius:3,color:'#f5f5da',fillColor:'#fff',fillOpacity:1,weight:1}).addTo(map).bindTooltip(k==='manchar'?'Manchar Lake':k==='delta'?'Indus Delta':k[0].toUpperCase()+k.slice(1),{direction:'right'}));
 function notice(title,text){const el=$('notice');el.replaceChildren();const icon=document.createElement('span');icon.className='notice-icon';icon.textContent='i';const box=document.createElement('div'),a=document.createElement('strong'),b=document.createElement('span');a.textContent=title;b.textContent=text;box.append(a,b);el.append(icon,box);}
 function fit(){if(googleReady){googleMap.fitBounds({south:23.4,west:66.65,north:28.6,east:71.2});}else if(boundary){map.fitBounds(L.geoJSON(boundary).getBounds(),{padding:[25,50]});}}
