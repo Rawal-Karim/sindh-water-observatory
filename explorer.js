@@ -85,7 +85,7 @@ loadCalendar();
 // Loading bar: start/done are counted so overlapping jobs keep it up; between steps it creeps towards 90%.
 const progress=(()=>{let jobs=0,value=0,timer=null;const bar=$('loadBar'),fill=bar.firstElementChild,note=$('loadNote');
  const paint=()=>{fill.style.width=(value*100).toFixed(1)+'%';bar.setAttribute('aria-valuenow',Math.round(value*100));};
- return{start(label){if(!jobs++){clearTimeout(timer?.hide);value=.04;fill.style.transition='none';paint();fill.offsetWidth;fill.style.transition='';}note.textContent=label||'';note.hidden=!label;bar.hidden=false;clearInterval(timer?.creep);timer={creep:setInterval(()=>{value+=(.9-value)*.025;paint();},200)};},
+ return{start(label){if(!jobs++){clearTimeout(timer?.hide);value=.04;fill.style.transition='none';paint();fill.offsetWidth;fill.style.transition='';}note.classList.remove('toast');clearTimeout(note._t);note.textContent=label||'';note.hidden=!label;bar.hidden=false;clearInterval(timer?.creep);timer={creep:setInterval(()=>{value+=(.9-value)*.025;paint();},200)};},
   step(v,label){value=Math.max(value,v);paint();if(label){note.textContent=label;note.hidden=false;}},
   done(){if(jobs&&--jobs)return;clearInterval(timer?.creep);value=1;paint();timer={hide:setTimeout(()=>{if(jobs)return;bar.hidden=true;note.hidden=true;value=0;paint();},400)};}};})();
 // Clicking a day: an instant in-browser estimate from the same Sentinel-2 files, then the Earth Engine result
@@ -135,3 +135,41 @@ const renderWithPhoto=renderLayer;renderLayer=function(){renderWithPhoto();if(ph
  if(url&&!googleReady){photoLayer=L.tileLayer(url,{maxZoom:20,zIndex:2,opacity:Number($('opacity').value)/100,attribution:'Sentinel-2 true colour, '+analysis.latestScene}).addTo(map);overlay?.setZIndex(3);}};
 $('opacity').addEventListener('input',e=>photoLayer?.setOpacity(Number(e.target.value)/100));
 if(analysis?.observationMode==='single-clear-day')renderLayer();// a #analysis= link was loaded before this wrapper existed
+// Place and road names over the imagery, on by default (Google's "satellite with labels"). CARTO/OpenStreetMap supplies
+// cities, towns, villages and neighbourhoods; Esri's transportation reference adds road lines, names and highway numbers.
+map.createPane('labels');Object.assign(map.getPane('labels').style,{zIndex:450,pointerEvents:'none'});
+const labelLayers=L.layerGroup([
+ L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}',{pane:'labels',maxZoom:20,maxNativeZoom:19,opacity:.7,attribution:'Roads © Esri, HERE, Garmin'}),
+ L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png',{pane:'labels',subdomains:'abcd',maxZoom:20,className:'place-labels',attribution:'Names © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, © <a href="https://carto.com/attributions">CARTO</a>'})]);
+let labelsOn=true;try{labelsOn=localStorage.getItem('sindhLabels')!=='off';}catch{}
+function setLabels(on){labelsOn=on;if(on)labelLayers.addTo(map);else labelLayers.remove();syncGoogleLabels();const b=$('labelsToggle');b.classList.toggle('active',on);b.setAttribute('aria-pressed',String(on));b.title=on?'Hide place and road names':'Show place and road names';try{localStorage.setItem('sindhLabels',on?'on':'off');}catch{}}
+function syncGoogleLabels(){if(googleReady){const t=labelsOn?'hybrid':'satellite';if(googleMap.getMapTypeId()!==t)googleMap.setMapTypeId(t);}}
+$('labelsToggle').onclick=()=>setLabels(!labelsOn);setLabels(labelsOn);
+const renderWithLabels=renderLayer;renderLayer=function(){renderWithLabels();syncGoogleLabels();};// Google connects by calling renderLayer
+
+// Phone bottom sheet: peek (search), half, full. Drag or tap the handle; the flow opens and closes it for you.
+const phone=matchMedia('(max-width:700px)'),sheet=$('sidePanel'),handle=$('sheetHandle');let sheetState='peek';
+function sheetStops(){const H=sheet.parentElement.clientHeight,peek=Math.min(Math.round(H*.4),handle.offsetHeight+$('searchForm').offsetHeight+$('searchResults').offsetHeight+18);return{peek,half:Math.round(H*.55),full:H-12};}
+function setSheet(state){if(!phone.matches){sheet.style.height='';sheet.classList.remove('sheet-open');document.documentElement.style.removeProperty('--sheet-peek');return;}
+ sheetState=state;const s=sheetStops();document.documentElement.style.setProperty('--sheet-peek',s.peek+'px');sheet.style.height=s[state]+'px';sheet.classList.toggle('sheet-open',state!=='peek');handle.setAttribute('aria-expanded',String(state!=='peek'));handle.setAttribute('aria-label',state==='peek'?'Show more controls':'Show less');if(state==='peek')sheet.scrollTop=0;}
+{let start=null;
+ handle.addEventListener('pointerdown',e=>{if(!phone.matches)return;start={y:e.clientY,h:sheet.offsetHeight,t:performance.now()};sheet.classList.add('dragging');handle.setPointerCapture(e.pointerId);});
+ handle.addEventListener('pointermove',e=>{if(!start)return;const s=sheetStops();sheet.style.height=Math.max(s.peek,Math.min(s.full,start.h-(e.clientY-start.y)))+'px';});
+ const end=e=>{if(!start)return;const dy=e.clientY-start.y,v=dy/Math.max(1,performance.now()-start.t);sheet.classList.remove('dragging');const s=sheetStops(),h=sheet.offsetHeight;start=null;
+  if(Math.abs(dy)<6){setSheet(sheetState==='peek'?'half':'peek');return;}// a tap
+  if(v<-.6)setSheet(h>s.half?'full':'half');else if(v>.6)setSheet(h<s.half?'peek':'half');else setSheet(['peek','half','full'].reduce((a,b)=>Math.abs(s[b]-h)<Math.abs(s[a]-h)?b:a));};
+ handle.addEventListener('pointerup',end);handle.addEventListener('pointercancel',end);
+ handle.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();setSheet(sheetState==='peek'?'half':'peek');}});}
+// Leaflet measures its box once; re-measure whenever the layout changes it (phone layout, rotation, desktop resize).
+new ResizeObserver(()=>map.invalidateSize({pan:false})).observe(map.getContainer());
+phone.addEventListener('change',()=>setSheet('peek'));addEventListener('resize',()=>setSheet(sheetState));setSheet('peek');
+// Open and close with the task: typing a search opens it, choosing a place / starting to draw / picking a day shows the map.
+$('placeQuery').addEventListener('focus',()=>{if(sheetState==='peek')setSheet('half');});
+$('searchResults').addEventListener('click',e=>{if(e.target.closest('button'))setSheet('peek');});
+new MutationObserver(()=>{if(sheetState==='peek')setSheet('peek');}).observe($('searchResults'),{childList:true,characterData:true,subtree:true});// peek grows to show results
+$('location').addEventListener('change',()=>setSheet('peek'));
+$('drawArea').addEventListener('click',()=>{if(drawing)setSheet('peek');});
+const areaChangedBase=calendarAreaChanged;calendarAreaChanged=function(){areaChangedBase();if(selectedBox&&phone.matches){$('historyPanel').open=true;setSheet('half');requestAnimationFrame(()=>{sheet.scrollTop+=$('areaStatus').getBoundingClientRect().top-sheet.getBoundingClientRect().top-handle.offsetHeight-4;});/* status line + calendar in view */}};
+$('calGrid').addEventListener('click',e=>{if(e.target.closest('.cal-day:not(:disabled)'))setSheet('peek');});
+// With the sheet down on a phone, the day's result would be out of sight: show it briefly over the map.
+new MutationObserver(()=>{const r=$('dayResult');if(!phone.matches||r.hidden||sheetState!=='peek'||!r.textContent.startsWith('Earth Engine'))return;const n=$('loadNote');setTimeout(()=>{n.textContent=r.textContent.replace(/ The map shows.*$/,'');n.classList.add('toast');n.hidden=false;clearTimeout(n._t);n._t=setTimeout(()=>{n.hidden=true;n.classList.remove('toast');},7000);},450);}).observe($('dayResult'),{childList:true,characterData:true,subtree:true});

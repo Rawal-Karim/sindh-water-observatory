@@ -43,3 +43,43 @@ aside>*{flex-shrink:0}
 .day-result{font-size:12px;line-height:1.5;margin:8px 0 0;padding:8px;border-radius:5px;background:#eef6f2;color:#17583f}
 .day-result.error{background:#fbeeee;color:#8a2c2c}
 .leaflet-image-layer.day-preview{image-rendering:pixelated}
+/* Place and road names over the imagery. CARTO's label text is grey; brighten it to near-white, keeping the dark halo. */
+.place-labels{filter:brightness(1.9) contrast(1.15)}
+.map-actions{display:flex;flex-direction:column;gap:8px}
+.map-actions .labels-toggle{font-size:14px;font-weight:700;color:#8a9a93}
+.map-actions .labels-toggle.active{color:#fff;background:#1f6b52}
+.sheet-handle{display:none}
+.load-note.toast{white-space:normal;text-align:center;max-width:min(92%,420px)}
+/* Phones: full-screen map, controls in a bottom sheet that is dragged or tapped between peek / half / full. */
+@media(max-width:700px){
+header{height:52px;padding:0 12px}
+.brand{font-size:15px;gap:9px}
+main{position:relative;display:block;height:calc(100dvh - 52px)}
+.workspace{position:absolute;inset:0;height:auto;min-height:0}
+aside#sidePanel{position:absolute;left:0;right:0;bottom:0;z-index:1100;max-height:none;height:var(--sheet-peek,150px);padding:0 16px calc(14px + env(safe-area-inset-bottom));border-radius:16px 16px 0 0;box-shadow:0 -6px 24px #0003;overflow-y:hidden;transition:height .25s ease;overscroll-behavior:contain}
+aside#sidePanel.sheet-open{overflow-y:auto}
+aside#sidePanel.dragging{transition:none}
+.sheet-handle{display:flex;position:sticky;top:0;z-index:2;background:#fff;justify-content:center;padding:10px 0 12px;margin:0 -16px;cursor:grab;touch-action:none}
+.sheet-handle span{width:44px;height:5px;border-radius:3px;background:#c3d1ca}
+.sheet-handle:focus-visible span{outline:2px solid #198bab;outline-offset:3px}
+#placeQuery,select,#historyPanel input{font-size:16px}
+#placeQuery{padding:11px}
+.input-row button,#historyPanel button{min-height:40px}
+.layers{gap:6px}
+.layer{min-height:48px}
+#historyPanel .cal-day{min-height:38px;font-size:13px}
+#historyPanel .cal-head button{min-width:40px;min-height:36px}
+.opacity input{height:28px}
+.leaflet-bottom{bottom:var(--sheet-peek,150px)}
+.legend{top:10px;bottom:auto;left:10px;font-size:10px}
+.leaflet-control-attribution{font-size:9px;line-height:1.3;max-height:36px;overflow-y:auto}
+.map-actions{top:136px;right:22px}
+.map-actions button{width:42px;height:42px}
+.leaflet-touch .leaflet-bar a,.leaflet-bar a{width:42px;height:42px;line-height:42px;font-size:20px}
+.leaflet-top.leaflet-right{margin-right:0}
+.load-note{top:10px}
+dialog{padding:22px 18px;max-height:calc(100dvh - 32px);overflow:auto}
+dialog h2{font-size:22px}
+}
+/* Phones held sideways: keep the header slim so the map keeps its height. */
+@media(max-height:500px) and (min-width:701px){header{height:46px;padding:0 14px}main{height:calc(100dvh - 46px)}.brand{font-size:14px}.brand .mark{transform:scale(.8)}aside{padding-top:12px}}
