@@ -1,3 +1,4 @@
+
 /* Sindh Water Observatory — standalone Google Earth Engine Code Editor app.
  * Run in your registered project; no service-account key belongs in this file.
  * Boundary: geoBoundaries gbOpen PAK ADM1, public domain, PAK-ADM1-70912109.
@@ -45,6 +46,13 @@ panel.add(run); panel.add(status);
 var exportPanel = ui.Panel(); panel.add(exportPanel);
 panel.add(ui.Label('Copernicus Sentinel / ESA • Google Earth Engine • geoBoundaries', {fontSize: '11px', color: '#677e6b'}));
 var generation = 0;
+// Water (2026-09 rule; the web map's daily snapshot and single-day service use the same): MNDWI > t with SWIR < 0.15
+// (bright roofs pass MNDWI but not dark SWIR) or, for channels narrower than a 20 m SWIR pixel, 10 m NDWI > 0 with
+// NIR < 0.15 and SWIR < 0.15. Tested near Hyderabad/Kotri and Sehwan: built-up false water -95%, drains found 22->55% / 35->74%.
+function waterRule(img, t) {
+  var darkSwir = img.select('B11').lt(1500);
+  return img.select('mndwi').gt(t).and(darkSwir).or(img.select('ndwi').gt(0).and(img.select('B8').lt(1500)).and(darkSwir));
+}
 function prepareS2(img) {
   var scl = img.select('SCL');
   var valid = scl.eq(4).or(scl.eq(5)).or(scl.eq(6)).or(scl.eq(7));
@@ -52,7 +60,7 @@ function prepareS2(img) {
   var sum = green.add(swir);
   var index = green.subtract(swir).divide(sum).rename('mndwi').updateMask(sum.gt(0));
   var time = ee.Image.constant(img.date().millis()).rename('time').toDouble();
-  return img.select(['B4', 'B3', 'B2', 'B11']).addBands(index).addBands(time)
+  return img.select(['B4', 'B3', 'B2', 'B8', 'B11']).addBands(index).addBands(img.normalizedDifference(['B3', 'B8']).rename('ndwi')).addBands(time)
     .updateMask(valid).copyProperties(img, ['system:time_start']);
 }
 function prepareS1(img) {
@@ -83,21 +91,21 @@ function analyze() {
   ee.Dictionary({source: source.size(), opticalHistory: allOptical.size()}).evaluate(function(counts, error) {
     if (id !== generation) return;
     if (error || !counts || !counts.source || !counts.opticalHistory) { run.setDisabled(false); status.setValue(error || 'No scenes available. Try a longer window or another date.'); return; }
-    var latest = source.select(chosen === 'Sentinel-2 MNDWI' ? ['mndwi','time'] : ['VV','time']).qualityMosaic('time').clip(region);
+    var latest = source.select(chosen === 'Sentinel-2 MNDWI' ? ['mndwi','ndwi','B8','B11','time'] : ['VV','time']).qualityMosaic('time').clip(region);
     var slope = ee.Terrain.slope(ee.Image('USGS/SRTMGL1_003'));
-    var water = chosen === 'Sentinel-2 MNDWI' ? latest.select('mndwi').gt(opticalThreshold) : latest.select('VV').lt(radarThreshold).updateMask(slope.lt(5));
+    var water = chosen === 'Sentinel-2 MNDWI' ? waterRule(latest, opticalThreshold) : latest.select('VV').lt(radarThreshold).updateMask(slope.lt(5));
     water = water.rename('water').clip(region);
     var valid = water.mask().rename('valid');
-    var dry = allOptical.map(function(img) {return img.updateMask(img.select('mndwi').lte(opticalThreshold));}).qualityMosaic('time').select(RGB);
+    var dry = allOptical.map(function(img) {return img.updateMask(waterRule(img, opticalThreshold).not());}).qualityMosaic('time').select(RGB);
     var historicalRGB = allOptical.qualityMosaic('time').select(RGB);
     // AI material affects appearance only. The measured mask controls every water pixel.
     var texture = historicalRGB.select('B3').divide(1800).clamp(0.6, 1.3).unmask(1);
     var material = ee.Image(WATER_TEXTURE_ASSET).select([0,1,2], RGB).resample('bilinear');
     var modeledWater = material.divide(255).pow(1.3).multiply(3000).multiply(texture).updateMask(water);
     var priorCollection = allOptical.filterDate(end.advance(-365, 'day'), start);
-    var emptyPrior = ee.Image.constant([0, 0]).rename(['mndwi','time']).toDouble().updateMask(ee.Image(0));
-    var prior = ee.ImageCollection([emptyPrior]).merge(priorCollection.select(['mndwi','time']).map(function(img) {return img.toDouble();})).qualityMosaic('time');
-    var receded = prior.select('mndwi').gt(opticalThreshold).and(water.not()).rename('receded');
+    var emptyPrior = ee.Image.constant([0, 0, 0, 0, 0]).rename(['mndwi','ndwi','B8','B11','time']).toDouble().updateMask(ee.Image(0));
+    var prior = ee.ImageCollection([emptyPrior]).merge(priorCollection.select(['mndwi','ndwi','B8','B11','time']).map(function(img) {return img.toDouble();})).qualityMosaic('time');
+    var receded = waterRule(prior, opticalThreshold).and(water.not()).rename('receded');
     var land = dry.updateMask(receded);
     var reconstruction = ee.ImageCollection([land.toFloat(), modeledWater.toFloat()]).mosaic().clip(region).updateMask(valid);
     left.layers().reset(); right.layers().reset();
@@ -166,6 +174,10 @@ var historyBox = null, historyGeometry = null, historyScan = 0, historyDates = [
 var historyStatus = ui.Label('Select a small area and scan one month for clear observations.', {whiteSpace:'pre-wrap'});
 var requestedDay = String(ui.url.get('date', new Date().toISOString().slice(0,10)));
 if (!/^\d{4}-\d{2}-\d{2}$/.test(requestedDay)) requestedDay = new Date().toISOString().slice(0,10);
+// Share of 20 m pixels (inside Sindh) that must be clear. 100% is unreachable for large areas: SCL leaves scattered
+// unclassified / medium-cloud pixels over sand and towns. The web map's calendar applies the same rule.
+var minClear = Number(ui.url.get('minclear', 99)); if (!(minClear >= 50 && minClear <= 100)) minClear = 99;
+var historyClearShare = {};
 var historyMonth = ui.Textbox({value:requestedDay.slice(0,7),placeholder:'YYYY-MM',onChange:invalidateHistory});
 var clearDay = ui.Select({items:[],placeholder:'Scan a month first',onChange:function(){historyResult++;historyOutputs.clear();historyAnalyze.setDisabled(false);}});
 var historyOutputs = ui.Panel();
@@ -176,11 +188,11 @@ var scanButton = ui.Button('Find clear days in month',scanClearDays);
 historyPanel.add(ui.Label('HISTORY & GIS EXPORT', {fontWeight:'bold',fontSize:'20px',color:'#164e43'}));
 historyPanel.add(ui.Button('Back to province overview',function(){ui.root.widgets().set(1,panel);}));
 historyPanel.add(ui.Label('2020 to today · Sentinel-2 MNDWI', {fontWeight:'bold'}));
-historyPanel.add(ui.Label('Only acquisition days with every sampled 20 m pixel clear and observed in your selected area are listed. SCL excludes clouds/shadows and Cloud Score+ cs_cdf ≥ 0.65 screens residual obscuration. Automated screening is not a guarantee.',{fontSize:'12px'}));
+historyPanel.add(ui.Label('Only acquisition days with at least '+minClear+'% of the 20 m pixels in your selected area clear and observed are listed; the rest are left out of the water total. SCL excludes clouds/shadows and Cloud Score+ cs_cdf ≥ 0.65 screens residual obscuration. Automated screening is not a guarantee.',{fontSize:'12px'}));
 historyPanel.add(ui.Button('Use current map view as area',function(){setHistoryBox(left.getBounds());}));
 var boxLabel=ui.Label('No area selected. Zoom in, then use the map view.',{fontSize:'12px'});historyPanel.add(boxLabel);
 historyPanel.add(ui.Label('Month (YYYY-MM)'));historyPanel.add(historyMonth);historyPanel.add(scanButton);historyPanel.add(clearDay);historyPanel.add(historyAnalyze);historyPanel.add(historyStatus);historyPanel.add(historyOutputs);
-historyPanel.add(ui.Label('Exports: 20 m EPSG:32642 (UTM 42N) GeoTIFF; water = 1, dry = 0, unknown/outside Sindh = -9999 (set this NoData value in GIS). Band 2 is MNDWI, band 3 is acquisition day since 1970-01-01 UTC. GeoJSON polygons are WGS84. Raw classification, no AI material or infrastructure display exclusions.',{fontSize:'11px'}));
+historyPanel.add(ui.Label('Exports: 10 m EPSG:32642 (UTM 42N) GeoTIFF; water = 1, dry = 0, unknown/outside Sindh = -9999 (set this NoData value in GIS). Band 2 is MNDWI, band 3 is acquisition day since 1970-01-01 UTC. GeoJSON polygons are WGS84. Raw classification, no AI material or infrastructure display exclusions.',{fontSize:'11px'}));
 panel.widgets().insert(2,ui.Button('Historical clear dates & GIS exports',showHistory));
 function setHistoryBox(b){
   if(typeof b==='string'){try{b=JSON.parse(b);}catch(e){historyStatus.setValue('Invalid area coordinates.');return;}}
@@ -193,11 +205,13 @@ function setHistoryBox(b){
 function strictS2(img){
   var scl=img.select('SCL');
   // Require all 10 m Cloud Score+ subpixels to pass before reducing to 20 m.
-  var score=img.select('cs_cdf').gte(0.65).unmask(0).reduceResolution({reducer:ee.Reducer.min(),maxPixels:16}).reproject({crs:'EPSG:32642',scale:20});
+  // Cloud Score+ lags new scenes by a few days; the linked band then has no projection, which broke reduceResolution
+  // for the whole month. Give it the scene's 10 m grid so a missing score just fails those pixels.
+  var score=img.select('cs_cdf').setDefaultProjection(img.select('B3').projection()).gte(0.65).unmask(0).reduceResolution({reducer:ee.Reducer.min(),maxPixels:16}).reproject({crs:'EPSG:32642',scale:20});
   var clear=scl.eq(4).or(scl.eq(5)).or(scl.eq(6)).and(score);
   var sum=img.select('B3').add(img.select('B11'));
   var index=img.select('B3').subtract(img.select('B11')).divide(sum).rename('mndwi').updateMask(sum.gt(0));
-  return img.select(RGB).addBands(index).updateMask(clear).copyProperties(img,['system:time_start']);
+  return img.select(RGB.concat(['B8','B11'])).addBands(index).addBands(img.normalizedDifference(['B3','B8']).rename('ndwi')).updateMask(clear).copyProperties(img,['system:time_start']);
 }
 function scanClearDays(){
   if(!historyGeometry){historyStatus.setValue('Select an area first.');return;}
@@ -210,16 +224,16 @@ function scanClearDays(){
   var dates=ee.List(historyCollection.aggregate_array('system:time_start')).map(function(t){return ee.Date(t).format('YYYY-MM-dd');}).distinct().sort();
   var screened=ee.FeatureCollection(dates.map(function(d){d=ee.String(d);var day=historyCollection.filterDate(ee.Date(d),ee.Date(d).advance(1,'day')).mosaic();
     var valid=day.select('mndwi').mask().unmask(0,false).rename('clear');
-    var minimum=valid.reduceRegion({reducer:ee.Reducer.min(),geometry:historyGeometry,crs:'EPSG:32642',scale:20,maxPixels:2e6,tileScale:4}).get('clear');
+    var minimum=valid.reduceRegion({reducer:ee.Reducer.mean(),geometry:historyGeometry,crs:'EPSG:32642',scale:20,maxPixels:2e6,tileScale:4}).get('clear');
     return ee.Feature(null,{date:d,clear:minimum});
-  })).filter(ee.Filter.eq('clear',1));
-  screened.aggregate_array('date').evaluate(function(list,error){
+  })).filter(ee.Filter.gte('clear',minClear/100));
+  ee.Dictionary.fromLists(screened.aggregate_array('date'),screened.aggregate_array('clear')).evaluate(function(dict,error){var list=dict?Object.keys(dict).sort():null;historyClearShare=dict||{};
     if(scanId!==historyScan)return;scanButton.setDisabled(false);
     if(error){historyStatus.setValue('Cloud screening failed: '+error);return;}
     historyDates=list||[];clearDay.items().reset(historyDates);
-    if(!historyDates.length){historyStatus.setValue('No fully clear, fully observed days in this month for this area. Try another month or a smaller area.');return;}
+    if(!historyDates.length){historyStatus.setValue('No days at least '+minClear+'% clear and observed in this month for this area. Try another month or a smaller area.');return;}
     clearDay.setValue(historyDates.indexOf(requestedDay)>=0?requestedDay:historyDates[historyDates.length-1]);
-    historyStatus.setValue(historyDates.length+' clear acquisition days found. Select one to analyze.');historyAnalyze.setDisabled(false);
+    historyStatus.setValue(historyDates.length+' clear acquisition days found. '+(historyDates.indexOf(requestedDay)<0?'Requested '+requestedDay+' is not clear/observed; choose an available day below.':'Requested day is available. Click Analyze.'));historyAnalyze.setDisabled(false);
   });
 }
 function analyzeClearDay(){
@@ -227,26 +241,31 @@ function analyzeClearDay(){
   var resultId=++historyResult,scanId=historyScan,geom=historyGeometry,box=historyBox.slice(),threshold=mndwi.getValue();
   historyOutputs.clear();historyAnalyze.setDisabled(true);historyStatus.setValue('Preparing '+day+' observations and water mask…');
   var image=historyCollection.filterDate(day,ee.Date(day).advance(1,'day')).mosaic().clip(geom),index=image.select('mndwi');
-  var water=index.gt(threshold).rename('water');
+  var water=waterRule(image,threshold).rename('water');
   var material=ee.Image(WATER_TEXTURE_ASSET).select([0,1,2],RGB).resample('bilinear').divide(255).pow(1.3).multiply(3000).updateMask(water).clip(geom);
   left.layers().reset();right.layers().reset();left.addLayer(image,visRGB,day+' clear Sentinel-2',true);right.addLayer(material,visRGB,day+' synthetic water',true,.85);right.addLayer(water.selfMask(),{palette:['2fb9ed']},day+' detected water',false);outline(left);outline(right);
-  var stats=ee.Image.pixelArea().divide(1e6).updateMask(water).reduceRegion({reducer:ee.Reducer.sum(),geometry:geom,crs:'EPSG:32642',scale:20,maxPixels:2e6,tileScale:4});
+  var stats=ee.Image.pixelArea().divide(1e6).updateMask(water).reduceRegion({reducer:ee.Reducer.sum(),geometry:geom,crs:'EPSG:32642',scale:10,maxPixels:5e7,tileScale:4});
   stats.evaluate(function(result,error){
     if(scanId!==historyScan||resultId!==historyResult)return;historyAnalyze.setDisabled(false);
     if(error){historyStatus.setValue('Statistics failed: '+error);return;}
     historyStatus.setValue(day+' · clear screened area · '+Number(result.area||0).toFixed(3)+' km² detected water.');
     var name='sindh_water_'+day.replace(/-/g,'');
     var raster=water.toFloat().addBands(index.toFloat()).addBands(ee.Image.constant(ee.Date(day).millis().divide(86400000)).rename('observation_day').toFloat().updateMask(index.mask())).clip(geom).unmask(-9999,false);
-    historyOutputs.add(ui.Button('Prepare GIS GeoTIFF',function(){raster.getDownloadURL({name:name,region:ee.Geometry.Rectangle(box,null,false),crs:'EPSG:32642',scale:20,format:'GEO_TIFF',filePerBand:false},function(url,err){if(scanId!==historyScan||resultId!==historyResult)return;if(err){historyStatus.setValue('GeoTIFF failed. Try a smaller area: '+err);return;}historyOutputs.add(ui.Label({value:'Download water / MNDWI / observation-day GeoTIFF',targetUrl:url}));});}));
-    var vectors=water.selfMask().toInt().reduceToVectors({geometry:geom,crs:'EPSG:32642',scale:20,geometryType:'polygon',eightConnected:true,labelProperty:'water',maxPixels:2e6,tileScale:4}).map(function(f){return f.set({date:day,method:'S2 MNDWI',threshold:threshold,cloud_cdf:0.65,scale_m:20});});
-    historyOutputs.add(ui.Button('Prepare water polygons (GeoJSON)',function(){vectors.getDownloadURL({format:'geojson',filename:name,callback:function(url,err){if(scanId!==historyScan||resultId!==historyResult)return;if(err){historyStatus.setValue('Vector export failed. Try a smaller area: '+err);return;}historyOutputs.add(ui.Label({value:'Download water polygons · GeoJSON',targetUrl:url}));}});}));
-    historyOutputs.add(ui.Label('Open GeoTIFF or GeoJSON in QGIS / ArcGIS. Set raster NoData to -9999; band order: water, MNDWI, observation_day. To obtain Shapefile, use Save Features As / Export Features on the GeoJSON. Links expire; save files after generation.',{fontSize:'11px'}));
-    historyOutputs.add(ui.Button('Prepare analysis JSON for web map',function(){
-      var manifest={schemaVersion:1,rendering:'satellite-preserving-overlays-v2',region:'Sindh',method:'Sentinel-2 MNDWI',observationMode:'single-clear-day',area:box,clearDates:historyDates,cloudScreen:{scl:[4,5,6],cs_cdf:0.65,requiredCoverage:100,scale:20},generatedAt:new Date().toISOString(),windowStart:day,windowEnd:day,latestScene:day,waterKm2:result.area||0,coveragePercent:100,statisticsScale:20,thresholds:{mndwi:threshold,vv:-17},layers:{}};
-      function receive(key,img,visual){img.getMapId(visual,function(info,err){if(scanId!==historyScan||resultId!==historyResult)return;if(err){historyStatus.setValue('Map export failed: '+err);return;}manifest.layers[key]={url:info.urlFormat||('https://earthengine.googleapis.com/v1/'+info.mapid+'/tiles/{z}/{x}/{y}')};if(manifest.layers.water&&manifest.layers.reconstruction){historyOutputs.add(ui.Textbox({value:JSON.stringify(manifest),style:{stretch:'horizontal'}}));historyOutputs.add(ui.Label('Copy JSON into a .json file, then load it using Data in the web map. Load several dates to switch between them.',{fontSize:'11px'}));}});}
-      receive('water',water.selfMask(),{palette:['2fb9ed']});receive('reconstruction',material,visRGB);
-    }));
+    var vectors=water.selfMask().toInt().reduceToVectors({geometry:geom,crs:'EPSG:32642',scale:10,geometryType:'polygon',eightConnected:true,labelProperty:'water',maxPixels:5e7,tileScale:4}).map(function(f){return f.set({date:day,method:'S2 MNDWI',threshold:threshold,cloud_cdf:0.65,scale_m:10});});
+    var manifest={schemaVersion:1,rendering:'satellite-preserving-overlays-v2',region:'Sindh',method:'Sentinel-2 MNDWI',observationMode:'single-clear-day',area:box,clearDates:historyDates,cloudScreen:{scl:[4,5,6],cs_cdf:0.65,requiredCoverage:minClear,scale:20},generatedAt:new Date().toISOString(),windowStart:day,windowEnd:day,latestScene:day,waterKm2:result.area||0,coveragePercent:Math.round((historyClearShare[day]||1)*1000)/10,statisticsScale:10,thresholds:{mndwi:threshold,vv:-17},layers:{},exports:{}};
+    var returnLink=ui.Label({value:'Preparing map result…',style:{fontSize:'16px',fontWeight:'bold',color:'#176148'}});
+    historyOutputs.add(returnLink);
+    var exportStatus=ui.Label('Preparing GeoTIFF and water polygons…',{fontSize:'12px'});historyOutputs.add(exportStatus);
+    var finished=0,failures=[];
+    function current(){return scanId===historyScan&&resultId===historyResult;}
+    function updateReturn(){if(!current())return;if(manifest.layers.water&&manifest.layers.reconstruction){returnLink.setValue('Show result on Sindh map ↗');returnLink.setUrl('https://rawal-karim.github.io/sindh-water-observatory/#analysis='+encodeURIComponent(JSON.stringify(manifest)));}if(finished===2)exportStatus.setValue(failures.length?failures.join(' '):'Both water-data downloads are ready. The map link includes them.');}
+    function receive(key,img,visual){img.getMapId(visual,function(info,err){if(!current())return;if(err||!info){historyStatus.setValue('Map tiles failed: '+err+'. Click Analyze to retry.');return;}manifest.layers[key]={url:info.urlFormat||('https://earthengine.googleapis.com/v1/'+info.mapid+'/tiles/{z}/{x}/{y}')};updateReturn();});}
+    receive('water',water.selfMask(),{palette:['2fb9ed']});receive('reconstruction',material,visRGB);
+    raster.getDownloadURL({name:name,region:ee.Geometry.Rectangle(box,null,false),crs:'EPSG:32642',scale:10,format:'GEO_TIFF',filePerBand:false},function(url,err){if(!current())return;finished++;if(err||!url){failures.push('GeoTIFF failed; choose a smaller area or Analyze again.');}else{manifest.exports.geotiff=url;historyOutputs.add(ui.Label({value:'Download water GeoTIFF ↗',targetUrl:url}));}updateReturn();});
+    vectors.getDownloadURL({format:'geojson',filename:name,callback:function(url,err){if(!current())return;finished++;if(err||!url){failures.push('Water polygons failed; choose a smaller area or Analyze again.');}else{manifest.exports.geojson=url;historyOutputs.add(ui.Label({value:'Download water polygons (GeoJSON) ↗',targetUrl:url}));}updateReturn();}});
+    historyOutputs.add(ui.Label('GeoTIFF: water, MNDWI, observation_day. Set NoData to -9999. Download links expire; save files after generation. No copying JSON is needed.',{fontSize:'11px'}));
+    historyOutputs.add(ui.Button('Show analysis JSON (optional)',function(){historyOutputs.add(ui.Textbox({value:JSON.stringify(manifest),style:{stretch:'horizontal'}}));}));
   });
 }
 var suppliedBox=ui.url.get('box',null);if(suppliedBox)setHistoryBox(suppliedBox);
-if(ui.url.get('history',false))showHistory();
+if(ui.url.get('history',false)){showHistory();if(historyBox&&ui.url.get('auto',false))scanClearDays();}
