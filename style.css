@@ -10,3 +10,8 @@ header{height:64px;padding:0 24px}.brand{font-size:17px}.brand b{font-size:8px}.
 .structure-status{font-size:11px;line-height:1.5;color:#62776e;margin:0 0 14px}
 
 .search-form{margin-bottom:8px}.input-row{display:flex;gap:6px}.input-row input{min-width:0;flex:1}.input-row button,#historyPanel button{border:1px solid #cbdad4;border-radius:5px;background:#f6f9f7;color:#214c41;padding:8px;cursor:pointer}#placeQuery{width:100%;padding:9px;border:1px solid #cbdad4;border-radius:5px}.search-results button{display:block;width:100%;text-align:left;padding:9px;border:0;border-bottom:1px solid #dce4df;background:#f0f5f2;color:#214c41}.search-results{font-size:12px;max-height:180px;overflow:auto;margin-bottom:12px}#historyPanel label{display:block;font-size:12px;margin:12px 0 5px}#historyDate{width:100%;padding:8px}#historyPanel .help{font-size:11px;line-height:1.5;margin:10px 0}.action-link{display:block;text-align:center;text-decoration:none;padding:10px;font-size:12px;margin:10px 0}a[aria-disabled=true]{opacity:.5;pointer-events:none}#historyPanel button:disabled{opacity:.5;cursor:default}#loadedHistory button{margin:4px}#historyPanel{margin-top:14px}#historyPanel summary{font-size:14px}#areaStatus{overflow-wrap:anywhere}
+/* Sidebar is a flex column: without this, scrollable children (search results) are squeezed to 0 px. */
+aside>*{flex-shrink:0}
+.search-results:empty{margin:0}
+#processDate[aria-disabled=true]{pointer-events:auto;cursor:not-allowed}
+.drawing-map,.drawing-map .leaflet-interactive{cursor:crosshair!important}
