@@ -14,9 +14,11 @@ Older manifests still load and display an explicit limitation in reconstruction 
 
 ## Source and rollout
 
-This branch starts at remote commit `9f3cc66283515a36cb723c5ca424492a7ad7ff83`. `earth-engine-app.js` was first synchronized with the published app's public modules source on 2026-09-23 in a separate commit. That preserves the published water rule, historical return link, cloud-score projection fix and export flow that were newer than the repository copy. The saved Code Editor script was not edited. Unpublished local reference files were not copied or modified.
+This branch starts at remote commit `9f3cc66283515a36cb723c5ca424492a7ad7ff83`. `earth-engine-app.js` was first synchronized with the published app's public modules source on 2026-09-23 in a separate commit. That preserves the published water rule, historical return link, cloud-score projection fix and export flow that were newer than the repository copy. The reconciled script was subsequently saved and published as Earth Engine script commit 7a6e8b3. Unpublished local reference files were not copied or modified.
 
-Before deployment, compare any newly saved/published processor changes against this source. Deploy `api/main.py` with `api/surface.py` to the existing service, and `api/snapshot.py` with that helper to the existing snapshot job. Generate a v3 snapshot before expecting the province map to change. Update the Earth Engine app from the reconciled script and publish the static viewer. Keep the current water texture asset and existing service configuration. Deployment, authenticated Earth Engine pixel evaluation and fresh production tiles remain unverified in this task because this checkout has no Earth Engine application credentials.
+Deployment completed on 2026-09-24. PR #1 was merged (64c315f) and the GitHub Pages viewer serves v3. Cloud Run revision sindh-water-api-00005-qay receives 100% of service traffic. The snapshot job uses the same tested image; execution sindh-water-snapshot-4m8vl completed successfully. The public Earth Engine app was updated from the saved repository script and its public modules include v3.
+
+The fresh production snapshot was generated at 2026-09-24T02:50:39Z for 31 August–23 September, with 99.4045% valid coverage. The live single-day API returned v3 with 100% coverage for the tested Kotri area on 2020-01-04. Staged tile endpoints returned HTTP 200, real observation tiles were visually inspected, and the public viewer was checked in reconstructed-surface mode at Kotri Barrage. Existing service settings and the water texture asset were retained.
 
 The stricter province mask can reduce coverage; the existing 80% publication guard deliberately keeps the preceding snapshot when that happens. Validate coverage before promoting a generated result.
 
@@ -28,4 +30,4 @@ The stricter province mask can reduce coverage; the existing 80% publication gua
 - `python tests/make_visual_fixture.py` then serve the repository and open `/tests/visual-fixture.html`: full viewer with conspicuously labelled simulated tiles for opacity and layout checks. Generated fixture HTML is ignored by git.
 - `/structure-mask-check.html`: the existing eight real browser canvas structure-mask checks.
 
-These checks do not validate satellite classification accuracy, natural-colour appearance of newly computed production tiles, or GeoTIFF downloads. The separate GeoTIFF failure is not claimed fixed.
+These checks do not independently establish satellite classification accuracy or validate GeoTIFF downloads. The separate GeoTIFF failure is not claimed fixed.
